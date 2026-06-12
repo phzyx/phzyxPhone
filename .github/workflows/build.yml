@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+# Bump this to invalidate the cached pjproject build.
+env:
+  PJPROJECT_REF: "2.17"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config git \
+            qtbase5-dev qtbase5-dev-tools \
+            libasound2-dev libssl-dev \
+            libopus-dev libgsm1-dev libspeex-dev libspeexdsp-dev
+
+      - name: Cache pjproject build
+        id: cache-pjproject
+        uses: actions/cache@v4
+        with:
+          path: third_party/pjproject-install
+          key: pjproject-${{ runner.os }}-${{ env.PJPROJECT_REF }}
+
+      - name: Build pjproject
+        if: steps.cache-pjproject.outputs.cache-hit != 'true'
+        run: scripts/build-pjproject.sh --ref "$PJPROJECT_REF"
+
+      - name: Build phzyxPhone
+        run: ./bootstrap.sh --skip-deps --skip-pjproject
+
+      - name: Show binary
+        run: ls -l build/phzyxphone
