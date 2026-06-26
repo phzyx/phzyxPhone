@@ -80,6 +80,9 @@ private:
     QWidget *buildLogTab();
     AccountSettings collectAccountSettings() const;
     void applyAccountSettings(const AccountSettings &s, int logLevel);
+    // Load a profile YAML from disk. When interactive, shows message boxes on
+    // failure; otherwise stays quiet (used for the startup auto-load).
+    bool loadProfileFile(const QString &fn, bool interactive);
     // Simple/Advanced account view: build the reduced "Simple" page, and keep
     // the two views consistent by deriving one set of fields from the other.
     QWidget *buildSimpleAccountPage();

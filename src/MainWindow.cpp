@@ -42,6 +42,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         trayIcon_->setToolTip("phzyxPhone");
         trayIcon_->show();
     }
+
+    // Restore the most recently used profile, if one is still on disk.
+    const QString lastProfile = QSettings().value("lastProfile").toString();
+    if (!lastProfile.isEmpty() && QFile::exists(lastProfile))
+        loadProfileFile(lastProfile, false /* quiet */);
 }
 
 MainWindow::~MainWindow() = default;
@@ -882,28 +887,40 @@ void MainWindow::onSaveProfile() {
     if (accountModeCombo_->currentIndex() == 0) syncSimpleToAdvanced();
     QTextStream(&f) << writeProfileYaml(collectAccountSettings(),
                                         logLevelCombo_->currentText().toInt());
+    // Remember this file so it is restored automatically next launch.
+    QSettings().setValue("lastProfile", fn);
     statusBar()->showMessage("Profile saved to " + fn, 5000);
 }
 
-void MainWindow::onLoadProfile() {
-    const QString fn = QFileDialog::getOpenFileName(
-        this, "Load profile", QString(), "YAML (*.yaml *.yml);;All files (*)");
-    if (fn.isEmpty()) return;
+// Shared loader used by both the Load button and the startup auto-load.
+bool MainWindow::loadProfileFile(const QString &fn, bool interactive) {
+    if (fn.isEmpty()) return false;
     QFile f(fn);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, "Load failed", "Could not read " + fn);
-        return;
+        if (interactive)
+            QMessageBox::warning(this, "Load failed", "Could not read " + fn);
+        return false;
     }
     const QString text = QTextStream(&f).readAll();
     AccountSettings s;      // defaults
     int logLevel = logLevelCombo_->currentText().toInt();
     if (!parseProfileYaml(text, s, logLevel)) {
-        QMessageBox::warning(this, "Load failed",
-                             "No recognised settings found in " + fn);
-        return;
+        if (interactive)
+            QMessageBox::warning(this, "Load failed",
+                                 "No recognised settings found in " + fn);
+        return false;
     }
     applyAccountSettings(s, logLevel);
+    // Remember this file so it is restored automatically next launch.
+    QSettings().setValue("lastProfile", fn);
     statusBar()->showMessage("Profile loaded from " + fn, 5000);
+    return true;
+}
+
+void MainWindow::onLoadProfile() {
+    const QString fn = QFileDialog::getOpenFileName(
+        this, "Load profile", QString(), "YAML (*.yaml *.yml);;All files (*)");
+    loadProfileFile(fn, true /* interactive */);
 }
 
 // ===========================================================================
