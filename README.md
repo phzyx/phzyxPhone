@@ -33,11 +33,14 @@ Free and open source, licensed under **GPL-2.0-or-later** (see `LICENSE`).
   auto-answer with a configurable status code. Incoming calls ring (with a
   ringer-volume slider), raise a desktop notification when the window is in the
   background, and surface an **Answer** button on the Phone tab.
-- **Real-time text (RTT)**: RFC 4103 / T.140 text streams negotiated alongside
-  audio. A **Conversations** tab lists threads per remote peer; type to send and
-  watch incoming text live. History is persisted to a local SQLite database
-  (path recorded in the profile, so loading a profile restores its history),
-  with a configurable maximum depth and per-conversation delete.
+- **Real-time text (RTT)**: RFC 4103 / T.140 text sessions handled as a
+  *separate call type* from audio/video - the INVITE offers a text-only SDP
+  (no audio codecs), and an incoming text session is **accepted** in the
+  Conversations tab rather than ringing as a phone call. A **Conversations**
+  tab lists threads per remote peer; type to send and watch incoming text live.
+  History is persisted to a local SQLite database (path recorded in the
+  profile, so loading a profile restores its history), with a configurable
+  maximum depth and per-conversation delete.
 - **DTMF**: RFC2833 or SIP INFO, configurable signal duration.
 - **Diagnostics**: live RTP/RTCP stream stats (packets, bytes, loss, jitter,
   RTT) and the full PJSIP trace log with export.
@@ -157,12 +160,16 @@ the binary, desktop file and themed icons under the configured prefix.
    call. Speaker, microphone and **ringer** levels each have a slider and a mute
    toggle. Incoming calls ring and (when the window is in the background) raise a
    desktop notification.
-3. **Conversations** tab: real-time text (RTT). The left list shows one thread
-   per remote peer (the active call is marked); select one to read its history.
-   With a call up, type in the box and press Enter/Send to transmit text, and
-   incoming text appears live. **Delete conversation** removes a thread's stored
-   history. Threads are saved in a local SQLite database recorded in the active
-   profile (see the **Application** tab for the retention limit).
+3. **Conversations** tab: real-time text (RTT), independent of the audio
+   dialer. Press **New conversation...** to start a text-only session with a
+   peer (a text-only SDP offer, no audio). When a peer offers an incoming text
+   session, a banner with an **Accept conversation** button appears here (it
+   does not ring the Phone tab). The left list shows one thread per remote peer
+   (the active session is marked); select one to read its history. With a
+   session up, type in the box and press Enter/Send to transmit text, and
+   incoming text appears live. **Delete conversation** removes a thread's
+   stored history. Threads are saved in a local SQLite database recorded in the
+   active profile (see the **Application** tab for the retention limit).
 4. **Codecs** tab: press **Refresh from endpoint** to load the codec list, edit
    priorities/params, then **Apply all** before placing a call.
 5. **SDP** tab: optionally configure an outgoing-SDP override and press
@@ -207,8 +214,10 @@ third_party/            - pjproject source + install prefix (git-ignored)
   build time) and appropriate certificates configured on your server.
 - Audio uses the default ALSA capture/playback device. On headless test rigs
   you can build pjproject with the null audio device.
-- Real-time text requires the remote party to negotiate an `m=text` (T.140)
-  stream; against endpoints that don't, RTT is simply absent. Conversation
+- Real-time text sessions are placed and answered with a text-only SDP, so the
+  remote party must support an `m=text` (T.140) stream as the sole media; an
+  incoming text-only INVITE is routed to the Conversations tab (Accept), while
+  audio/video INVITEs still ring the Phone tab as before. Conversation
   databases hold message history and addresses, so they are git-ignored by
   default (`*.db`, `data/`); the profile YAML stores only the database path.
 

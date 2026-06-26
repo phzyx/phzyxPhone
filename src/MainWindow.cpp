@@ -40,6 +40,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(core_, &SipCore::errorOccurred,      this, &MainWindow::handleError);
     connect(core_, &SipCore::rttReceived,        this, &MainWindow::handleRttReceived);
     connect(core_, &SipCore::rttSent,            this, &MainWindow::handleRttSent);
+    connect(core_, &SipCore::incomingTextCall,   this, &MainWindow::handleIncomingTextCall);
+    connect(core_, &SipCore::textCallStateChanged, this, &MainWindow::handleTextCallState);
 
     tabs_ = new QTabWidget(this);
     tabs_->addTab(buildAccountTab(), "Account / Transport");
@@ -1356,21 +1358,8 @@ void MainWindow::handleCallState(const QString &state, const QString &remote,
             disconnected ? QString("Idle. %1").arg(reason).trimmed()
                          : QString("%1  %2").arg(state, remote).trimmed());
 
-    // Conversations tab: RTT can only flow on an active call. Track the peer
-    // and, when a call comes up, focus its conversation thread.
-    if (active && !remote.isEmpty()) {
-        const QString key = normalizePeerKey(remote);
-        if (key != convActivePeer_) {
-            convActivePeer_ = key;
-            // Focus this peer's thread (it may be empty until the first block).
-            showConversation(key);
-            refreshConvList();
-        }
-    } else if (disconnected) {
-        convActivePeer_.clear();
-    }
-    if (convInput_)   convInput_->setEnabled(active);
-    if (convSendBtn_) convSendBtn_->setEnabled(active);
+    // NOTE: media calls (audio/video) no longer touch the Conversations tab.
+    // RTT text sessions are tracked entirely via handleTextCallState().
 }
 
 void MainWindow::handleMedia(const QString &info) {
@@ -1466,6 +1455,23 @@ QWidget *MainWindow::buildConversationsTab() {
     auto *right = new QWidget;
     auto *rv = new QVBoxLayout(right);
     rv->setContentsMargins(0, 0, 0, 0);
+
+    // Incoming text-session banner: shown only when a peer is offering an RTT
+    // session that the user can accept. This is the text-session equivalent of
+    // the Phone tab's Answer button, kept entirely separate from media calls.
+    auto *banner = new QHBoxLayout;
+    convBannerLabel_ = new QLabel;
+    convBannerLabel_->setStyleSheet("color:#b06000; font-weight:bold;");
+    convAcceptBtn_ = new QPushButton("Accept conversation");
+    convAcceptBtn_->setToolTip("Accept the incoming real-time-text session.");
+    connect(convAcceptBtn_, &QPushButton::clicked,
+            this, &MainWindow::onAcceptTextCall);
+    convBannerLabel_->setVisible(false);
+    convAcceptBtn_->setVisible(false);
+    banner->addWidget(convBannerLabel_, 1);
+    banner->addWidget(convAcceptBtn_);
+    rv->addLayout(banner);
+
     convView_ = new QTextBrowser;
     convView_->setOpenExternalLinks(false);
     rv->addWidget(convView_, 1);
@@ -1600,16 +1606,67 @@ void MainWindow::onNewConversation() {
         return;
     }
     QString err;
-    if (!core_->makeCall(uri, {}, err)) {
-        QMessageBox::warning(this, "Call failed", err);
+    if (!core_->startTextSession(uri, err)) {
+        QMessageBox::warning(this, "Conversation failed", err);
         return;
     }
-    // Focus the (initially empty) thread for this peer; handleCallState will
-    // mark it active and refresh once the call progresses.
+    // Focus the (initially empty) thread for this peer; handleTextCallState
+    // will mark it active and refresh once the session connects.
     showConversation(normalizePeerKey(uri));
     refreshConvList();
     if (convInput_) convInput_->setFocus();
     statusBar()->showMessage("Starting conversation with " + uri, 4000);
+}
+
+// An incoming text-only (RTT) session is being offered. Surface an accept
+// affordance in the Conversations tab instead of ringing as a phone call.
+void MainWindow::handleIncomingTextCall(const QString &peer) {
+    convPendingPeer_ = normalizePeerKey(peer);
+    if (convBannerLabel_) {
+        convBannerLabel_->setText("Incoming text conversation from " + peer);
+        convBannerLabel_->setVisible(true);
+    }
+    if (convAcceptBtn_) convAcceptBtn_->setVisible(true);
+    // Bring the Conversations tab forward and focus the peer's thread.
+    if (tabs_) tabs_->setCurrentWidget(tabs_->widget(2));
+    showConversation(convPendingPeer_);
+    refreshConvList();
+    statusBar()->showMessage("Incoming text conversation from " + peer, 8000);
+}
+
+void MainWindow::onAcceptTextCall() {
+    core_->acceptTextSession();
+    if (convBannerLabel_) convBannerLabel_->setVisible(false);
+    if (convAcceptBtn_)   convAcceptBtn_->setVisible(false);
+    if (convInput_) convInput_->setFocus();
+}
+
+// State changes for the active text session (separate from media calls).
+void MainWindow::handleTextCallState(const QString &state, const QString &peer,
+                                     const QString &reason) {
+    const bool disconnected =
+        state.compare("DISCONNECTED", Qt::CaseInsensitive) == 0;
+    const bool active = !disconnected && !state.isEmpty();
+    statusBar()->showMessage(
+        QString("Text session: %1  %2").arg(state, reason).trimmed(), 4000);
+
+    if (active && !peer.isEmpty()) {
+        const QString key = normalizePeerKey(peer);
+        if (key != convActivePeer_) {
+            convActivePeer_ = key;
+            showConversation(key);
+        }
+        refreshConvList();
+    } else if (disconnected) {
+        convActivePeer_.clear();
+        convPendingPeer_.clear();
+        if (convBannerLabel_) convBannerLabel_->setVisible(false);
+        if (convAcceptBtn_)   convAcceptBtn_->setVisible(false);
+        refreshConvList();
+    }
+    // Text can only be sent once the session is up.
+    if (convInput_)   convInput_->setEnabled(active);
+    if (convSendBtn_) convSendBtn_->setEnabled(active);
 }
 
 void MainWindow::onConversationSelected() {

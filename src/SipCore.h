@@ -125,8 +125,19 @@ public:
     QString currentStreamStats();
 
     // Real-time text (RFC 4103 / T.140) ----------------------------------
-    // Send a block of real-time text on the current call's text stream.
-    // No-op when there is no active call or the call has no text media.
+    // Text sessions are handled as a *separate* call type from audio/video
+    // media calls: the INVITE offers a text-only SDP (no audio/video codecs),
+    // and incoming text-only INVITEs are surfaced as conversations to accept
+    // rather than as ringing phone calls.
+    //
+    // Start an outgoing RTT session (text-only SDP offer) to destUri.
+    bool startTextSession(const QString &destUri, QString &err);
+    // Accept the pending incoming text session (answers text-only).
+    void acceptTextSession();
+    // Hang up / decline the current text session.
+    void hangupTextSession(int statusCode = 603);
+    // Send a block of real-time text on the current text session.
+    // No-op when there is no active text session.
     void sendRtt(const QString &text);
 
     // Audio levels --------------------------------------------------------
@@ -165,11 +176,18 @@ public:
     void reportIncoming(MyCall *call, const QString &remote);
     // Forward an incoming RTT block (peer = call's remote URI) to the GUI.
     void reportRxText(MyCall *call, const QString &peer, const QString &text);
+    // Report an incoming text-only session (RTT) awaiting acceptance.
+    void reportIncomingText(MyCall *call, const QString &peer);
+    // Report a state change on the current text session.
+    void reportTextCallState(const QString &state, const QString &peer,
+                             const QString &reason);
     bool autoAnswerEnabled() const { return autoAnswer_; }
     int  autoAnswerCode() const { return autoAnswerCode_; }
     void registerThread();        // register current thread with PJSIP
     void setCurrentCall(MyCall *c) { currentCall_ = c; }
     MyCall *currentCall() const { return currentCall_; }
+    void setCurrentTextCall(MyCall *c) { currentTextCall_ = c; }
+    MyCall *currentTextCall() const { return currentTextCall_; }
 
 signals:
     void logMessage(const QString &line);
@@ -183,6 +201,11 @@ signals:
     // Real-time text: a block was received from / sent to a remote peer.
     void rttReceived(const QString &peer, const QString &text);
     void rttSent(const QString &peer, const QString &text);
+    // A peer is offering an incoming text-only (RTT) session to accept.
+    void incomingTextCall(const QString &peer);
+    // The current text session changed state (e.g. CONFIRMED/DISCONNECTED).
+    void textCallStateChanged(const QString &state, const QString &peer,
+                              const QString &reason);
 
 private:
     pj::Endpoint ep_;
@@ -194,7 +217,8 @@ private:
     // so is a double-free and crashes on shutdown. Hence a raw pointer, not a
     // unique_ptr, and we simply forget it (set to nullptr) after libDestroy().
     GuiLogWriter *logWriter_ = nullptr;
-    MyCall *currentCall_ = nullptr;  // most recent / active call (owned by pj)
+    MyCall *currentCall_ = nullptr;  // most recent / active media call (owned by pj)
+    MyCall *currentTextCall_ = nullptr;  // active RTT text session (owned by pj)
 
     bool created_ = false;
     bool started_ = false;

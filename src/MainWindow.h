@@ -51,6 +51,7 @@ private slots:
     // Conversations (RTT) tab
     void onRttSend();
     void onNewConversation();
+    void onAcceptTextCall();
     void onConversationSelected();
     void onDeleteConversation();
     void onConvDepthChanged(int depth);
@@ -84,6 +85,9 @@ private slots:
     void handleError(const QString &msg);
     void handleRttReceived(const QString &peer, const QString &text);
     void handleRttSent(const QString &peer, const QString &text);
+    void handleIncomingTextCall(const QString &peer);
+    void handleTextCallState(const QString &state, const QString &peer,
+                             const QString &reason);
 
 private:
     QWidget *buildAccountTab();
@@ -176,10 +180,12 @@ private:
     QTextBrowser*convView_ = nullptr;
     QLineEdit   *convInput_ = nullptr;
     QPushButton *convSendBtn_ = nullptr, *convDeleteBtn_ = nullptr,
-                *convNewBtn_ = nullptr;
+                *convNewBtn_ = nullptr, *convAcceptBtn_ = nullptr;
     QLabel      *convDbLabel_ = nullptr;
+    QLabel      *convBannerLabel_ = nullptr;  // "incoming text session" banner
     QString      convCurrentPeer_;      // selected conversation key
-    QString      convActivePeer_;       // peer of the in-progress call (if any)
+    QString      convActivePeer_;       // peer of the active text session (if any)
+    QString      convPendingPeer_;      // peer of a pending incoming text session
     QString      convDbPath_;           // configured DB path (from profile)
     QSpinBox    *convDepthSpin_ = nullptr;  // on the Application tab
 

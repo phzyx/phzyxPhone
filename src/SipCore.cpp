@@ -33,6 +33,11 @@ public:
     MyCall(Account &acc, SipCore *core, int callId = PJSUA_INVALID_ID)
         : Call(acc, callId), core_(core) {}
 
+    // True when this is an RTT text-only session rather than an audio/video
+    // media call. Set by makeCall/startTextSession and by the incoming-call
+    // handler after inspecting the offered media.
+    bool textOnly_ = false;
+
     void onCallState(OnCallStateParam &prm) override;
     void onCallMediaState(OnCallMediaStateParam &prm) override;
     void onCallSdpCreated(OnCallSdpCreatedParam &prm) override;
@@ -59,8 +64,24 @@ public:
     void onIncomingCall(OnIncomingCallParam &prm) override {
         auto *call = new MyCall(*this, core_, prm.callId);
         CallInfo ci = call->getInfo();
+        const QString peer = QString::fromStdString(ci.remoteUri);
+
+        // Distinguish an RTT text session from an audio/video media call by
+        // looking at the offered media: a text-only INVITE has a text stream
+        // and no audio or video. These are handled completely separately - no
+        // ringing, no Phone-tab Answer; the user accepts the conversation.
+        const bool textOnly = (ci.remTextCount > 0 &&
+                               ci.remAudioCount == 0 &&
+                               ci.remVideoCount == 0);
+        if (textOnly) {
+            call->textOnly_ = true;
+            core_->setCurrentTextCall(call);
+            core_->reportIncomingText(call, peer);
+            return;   // wait for the user to accept (acceptTextSession)
+        }
+
         core_->setCurrentCall(call);
-        core_->reportIncoming(call, QString::fromStdString(ci.remoteUri));
+        core_->reportIncoming(call, peer);
 
         if (!core_->autoAnswerEnabled())
             core_->startRinging();
@@ -84,6 +105,21 @@ private:
 void MyCall::onCallState(OnCallStateParam &prm) {
     (void)prm;
     CallInfo ci = getInfo();
+
+    // Text sessions are reported on their own channel and never touch the
+    // ringer or the Phone/Call tabs.
+    if (textOnly_) {
+        core_->reportTextCallState(QString::fromStdString(ci.stateText),
+                                   QString::fromStdString(ci.remoteUri),
+                                   QString::fromStdString(ci.lastReason));
+        if (ci.state == PJSIP_INV_STATE_DISCONNECTED) {
+            if (core_->currentTextCall() == this)
+                core_->setCurrentTextCall(nullptr);
+            delete this;
+        }
+        return;
+    }
+
     core_->reportCallState(QString::fromStdString(ci.stateText),
                            QString::fromStdString(ci.remoteUri),
                            QString::fromStdString(ci.lastReason));
@@ -296,6 +332,7 @@ void SipCore::shutdown() {
     if (!created_) return;
     try {
         currentCall_ = nullptr;
+        currentTextCall_ = nullptr;
         stopRinging();
         ringGen_.reset();   // release the tone generator before libDestroy
         account_.reset();
@@ -366,9 +403,11 @@ bool SipCore::makeCall(const QString &destUri,
     try {
         auto *call = new MyCall(*account_, this);
         CallOpParam prm(true /* use default call settings */);
-        // Negotiate audio + a real-time text (T.140) stream on the INVITE.
+        // A media call offers audio only (no RTT text stream - text sessions
+        // are placed separately via startTextSession()).
         prm.opt.audioCount = 1;
-        prm.opt.textCount  = 1;
+        prm.opt.videoCount = 0;
+        prm.opt.textCount  = 0;
         // Caller ID identity headers (only when configured).
         if (!callerPai_.isEmpty()) {
             SipHeader sh;
@@ -466,16 +505,82 @@ void SipCore::sendDtmf(const QString &digits, int method, unsigned durationMs) {
 }
 
 // --- Real-time text (RFC 4103 / T.140) -------------------------------------
-void SipCore::sendRtt(const QString &text) {
-    if (!currentCall_ || text.isEmpty()) return;
+// Start an outgoing text-only session: the INVITE offers a T.140 text stream
+// and *no* audio or video, so it is negotiated entirely separately from a
+// regular media call.
+bool SipCore::startTextSession(const QString &destUri, QString &err) {
+    if (!account_) { err = "No account configured"; return false; }
     registerThread();
     try {
-        CallInfo ci = currentCall_->getInfo();
+        auto *call = new MyCall(*account_, this);
+        call->textOnly_ = true;
+        CallOpParam prm(true /* use default call settings */);
+        prm.opt.audioCount = 0;
+        prm.opt.videoCount = 0;
+        prm.opt.textCount  = 1;
+        // Caller ID identity headers (only when configured).
+        if (!callerPai_.isEmpty()) {
+            SipHeader sh;
+            sh.hName  = "P-Asserted-Identity";
+            sh.hValue = callerPai_.toStdString();
+            prm.txOption.headers.push_back(sh);
+        }
+        if (!callerRpid_.isEmpty()) {
+            SipHeader sh;
+            sh.hName  = "Remote-Party-ID";
+            sh.hValue = callerRpid_.toStdString();
+            prm.txOption.headers.push_back(sh);
+        }
+        call->makeCall(destUri.toStdString(), prm);
+        currentTextCall_ = call;
+        return true;
+    } catch (Error &e) {
+        err = QString::fromStdString(e.info());
+        return false;
+    }
+}
+
+// Accept a pending incoming text session, answering with a text-only SDP.
+void SipCore::acceptTextSession() {
+    if (!currentTextCall_) return;
+    registerThread();
+    try {
+        CallOpParam prm;
+        prm.statusCode = (pjsip_status_code)200;
+        prm.opt.audioCount = 0;
+        prm.opt.videoCount = 0;
+        prm.opt.textCount  = 1;
+        currentTextCall_->answer(prm);
+    } catch (Error &e) {
+        reportLog(QString("accept text session failed: %1")
+                      .arg(QString::fromStdString(e.info())));
+    }
+}
+
+// Hang up / decline the current text session.
+void SipCore::hangupTextSession(int statusCode) {
+    if (!currentTextCall_) return;
+    registerThread();
+    try {
+        CallOpParam prm;
+        prm.statusCode = (pjsip_status_code)statusCode;
+        currentTextCall_->hangup(prm);
+    } catch (Error &e) {
+        reportLog(QString("hangup text session failed: %1")
+                      .arg(QString::fromStdString(e.info())));
+    }
+}
+
+void SipCore::sendRtt(const QString &text) {
+    if (!currentTextCall_ || text.isEmpty()) return;
+    registerThread();
+    try {
+        CallInfo ci = currentTextCall_->getInfo();
         const QString peer = QString::fromStdString(ci.remoteUri);
         CallSendTextParam p;
         p.medIdx = -1;                 // first (default) text stream
         p.text   = text.toStdString();
-        currentCall_->sendText(p);
+        currentTextCall_->sendText(p);
         emit rttSent(peer, text);
     } catch (Error &e) {
         reportLog(QString("RTT send failed: %1")
@@ -635,4 +740,11 @@ void SipCore::reportIncoming(MyCall *, const QString &remote) {
 }
 void SipCore::reportRxText(MyCall *, const QString &peer, const QString &text) {
     emit rttReceived(peer, text);
+}
+void SipCore::reportIncomingText(MyCall *, const QString &peer) {
+    emit incomingTextCall(peer);
+}
+void SipCore::reportTextCallState(const QString &state, const QString &peer,
+                                  const QString &reason) {
+    emit textCallStateChanged(state, peer, reason);
 }
