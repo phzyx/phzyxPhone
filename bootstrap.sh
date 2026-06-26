@@ -44,3 +44,5 @@ echo "==> [3/3] Building phzyxPhone"
 
 echo
 echo "==> Done. Launch with: ./build/phzyxphone"
+echo "==> Optional: register the dock/launcher icon with"
+echo "    scripts/install-desktop.sh"

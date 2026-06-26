@@ -3,6 +3,10 @@
 #include "MainWindow.h"
 
 #include <QtWidgets>
+#include <QStyleFactory>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+#include <QStyleHints>
+#endif
 
 // Column indices for the codec matrix table.
 enum CodecCol {
@@ -12,6 +16,16 @@ enum CodecCol {
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     core_ = new SipCore(this);
+
+    // Capture the native look so the Light/System themes can restore it.
+    defaultPalette_   = qApp->palette();
+    defaultStyleName_ = qApp->style()->objectName();
+    themeMode_ = QSettings().value("themeMode", ThemeSystem).toInt();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    // Follow live OS light/dark switches while in System mode.
+    connect(qApp->styleHints(), &QStyleHints::colorSchemeChanged, this,
+            [this](Qt::ColorScheme) { if (themeMode_ == ThemeSystem) applyTheme(ThemeSystem); });
+#endif
 
     connect(core_, &SipCore::logMessage,         this, &MainWindow::handleLog);
     connect(core_, &SipCore::registrationChanged,this, &MainWindow::handleReg);
@@ -28,6 +42,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     tabs_->addTab(buildCallTab(),    "Call");
     tabs_->addTab(buildSdpTab(),     "SDP");
     tabs_->addTab(buildLogTab(),     "Log");
+    tabs_->addTab(buildApplicationTab(), "Application");
     setCentralWidget(tabs_);
 
     setWindowTitle("phzyxPhone - PJSIP test softphone");
@@ -43,6 +58,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         trayIcon_->show();
     }
 
+    applyTheme(themeMode_);
+
     // Restore the most recently used profile, if one is still on disk.
     const QString lastProfile = QSettings().value("lastProfile").toString();
     if (!lastProfile.isEmpty() && QFile::exists(lastProfile))
@@ -50,6 +67,82 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() = default;
+
+// ===========================================================================
+// Appearance / theming
+// ===========================================================================
+// The Application tab gathers app-wide preferences (theme today, room to grow).
+QWidget *MainWindow::buildApplicationTab() {
+    auto *w     = new QWidget;
+    auto *outer = new QVBoxLayout(w);
+    outer->setAlignment(Qt::AlignTop);
+
+    auto *appearance = new QGroupBox("Appearance");
+    auto *form = new QFormLayout(appearance);
+
+    themeCombo_ = new QComboBox;
+    // Item order matches the ThemeMode enum: Light=0, Dark=1, System=2.
+    themeCombo_->addItems({"Light", "Dark", "System"});
+    themeCombo_->setCurrentIndex(themeMode_);
+    themeCombo_->setToolTip("System follows your operating system's light/dark setting.");
+    connect(themeCombo_,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) { applyTheme(idx); });
+    form->addRow("Theme", themeCombo_);
+
+    auto *hint = new QLabel(
+        "\u201cSystem\u201d follows your operating system's light/dark "
+        "preference. Your choice is remembered between sessions.");
+    hint->setWordWrap(true);
+    hint->setStyleSheet("color: gray;");
+    form->addRow(hint);
+
+    outer->addWidget(appearance);
+    return w;
+}
+
+bool MainWindow::systemPrefersDark() const {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    return qApp->styleHints()->colorScheme() == Qt::ColorScheme::Dark;
+#else
+    // No portable Qt5 query; infer from the palette the platform handed us.
+    return defaultPalette_.color(QPalette::Window).lightness() < 128;
+#endif
+}
+
+void MainWindow::applyTheme(int mode) {
+    themeMode_ = mode;
+    QSettings().setValue("themeMode", mode);
+
+    const bool dark = (mode == ThemeDark) ||
+                      (mode == ThemeSystem && systemPrefersDark());
+    if (dark) {
+        qApp->setStyle(QStyleFactory::create("Fusion"));
+        QPalette p;
+        p.setColor(QPalette::Window,          QColor(0x2b, 0x2b, 0x2e));
+        p.setColor(QPalette::WindowText,      QColor(0xe6, 0xe6, 0xe6));
+        p.setColor(QPalette::Base,            QColor(0x23, 0x23, 0x26));
+        p.setColor(QPalette::AlternateBase,   QColor(0x2f, 0x2f, 0x33));
+        p.setColor(QPalette::ToolTipBase,     QColor(0x23, 0x23, 0x26));
+        p.setColor(QPalette::ToolTipText,     QColor(0xe6, 0xe6, 0xe6));
+        p.setColor(QPalette::Text,            QColor(0xe6, 0xe6, 0xe6));
+        p.setColor(QPalette::Button,          QColor(0x2f, 0x2f, 0x33));
+        p.setColor(QPalette::ButtonText,      QColor(0xe6, 0xe6, 0xe6));
+        p.setColor(QPalette::BrightText,      Qt::red);
+        p.setColor(QPalette::Link,            QColor(0x4d, 0x9a, 0xff));
+        p.setColor(QPalette::Highlight,       QColor(0x37, 0x6c, 0xc4));
+        p.setColor(QPalette::HighlightedText, Qt::white);
+        p.setColor(QPalette::PlaceholderText, QColor(0x9a, 0x9a, 0x9a));
+        p.setColor(QPalette::Disabled, QPalette::Text,       QColor(0x7a, 0x7a, 0x7a));
+        p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(0x7a, 0x7a, 0x7a));
+        p.setColor(QPalette::Disabled, QPalette::WindowText, QColor(0x7a, 0x7a, 0x7a));
+        qApp->setPalette(p);
+    } else {
+        if (!defaultStyleName_.isEmpty())
+            qApp->setStyle(QStyleFactory::create(defaultStyleName_));
+        qApp->setPalette(defaultPalette_);
+    }
+}
 
 // ===========================================================================
 // Account / Transport tab

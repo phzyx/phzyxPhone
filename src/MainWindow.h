@@ -3,6 +3,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QPalette>
 #include "SipCore.h"
 
 class QLineEdit;
@@ -24,6 +25,8 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
+
+    enum ThemeMode { ThemeLight = 0, ThemeDark = 1, ThemeSystem = 2 };
 
 private slots:
     // Account / transport
@@ -83,6 +86,11 @@ private:
     // Load a profile YAML from disk. When interactive, shows message boxes on
     // failure; otherwise stays quiet (used for the startup auto-load).
     bool loadProfileFile(const QString &fn, bool interactive);
+
+    // Appearance / theming.
+    QWidget *buildApplicationTab();
+    void applyTheme(int mode);          // ThemeLight | ThemeDark | ThemeSystem
+    bool systemPrefersDark() const;
     // Simple/Advanced account view: build the reduced "Simple" page, and keep
     // the two views consistent by deriving one set of fields from the other.
     QWidget *buildSimpleAccountPage();
@@ -134,6 +142,13 @@ private:
     QPushButton *speakerMuteBtn_, *micMuteBtn_, *ringMuteBtn_;
     QSystemTrayIcon *trayIcon_ = nullptr;   // incoming-call notifications
     bool         incomingPending_ = false;  // a call is ringing, awaiting answer
+
+    // Theme: remembered across runs; defaults captured at construction so the
+    // light/native look can be restored exactly.
+    int      themeMode_ = ThemeSystem;
+    QPalette defaultPalette_;
+    QString  defaultStyleName_;
+    QComboBox *themeCombo_ = nullptr;
     bool         inCall_ = false;       // true when a call is CONFIRMED (media up)
 
     // Codec tab

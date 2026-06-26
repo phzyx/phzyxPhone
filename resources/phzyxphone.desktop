@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=phzyxPhone
+GenericName=SIP Softphone
+Comment=Testing-focused SIP softphone (PJSIP + Qt)
+Exec=phzyxphone
+Icon=phzyxphone
+Terminal=false
+Categories=Network;Telephony;
+Keywords=SIP;VoIP;phone;softphone;PJSIP;
+StartupNotify=true
+StartupWMClass=phzyxphone

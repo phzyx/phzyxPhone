@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/">
+    <file>phzyxphone.png</file>
+  </qresource>
+</RCC>

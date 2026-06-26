@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- background -->
+  <rect width="512" height="512" rx="104" fill="#21305a"/>
+  <rect x="26" y="26" width="460" height="460" rx="82" fill="none" stroke="#33457f" stroke-width="6"/>
+
+  <!-- drop shadow under phone -->
+  <ellipse cx="256" cy="438" rx="150" ry="26" fill="#16203f"/>
+
+  <!-- handset cradle (horizontal receiver across the top) -->
+  <g fill="#f5ecd7">
+    <rect x="120" y="120" width="272" height="40" rx="20"/>
+    <circle cx="120" cy="140" r="40"/>
+    <circle cx="392" cy="140" r="40"/>
+  </g>
+  <g fill="#cdbf9a">
+    <circle cx="120" cy="140" r="18"/>
+    <circle cx="392" cy="140" r="18"/>
+  </g>
+
+  <!-- phone body -->
+  <path d="M138 200 H374 a44 44 0 0 1 44 44 v118 a44 44 0 0 1 -44 44 H138 a44 44 0 0 1 -44 -44 v-118 a44 44 0 0 1 44 -44 Z"
+        fill="#f5ecd7"/>
+  <!-- cradle posts -->
+  <rect x="150" y="176" width="34" height="40" rx="10" fill="#e7dcc1"/>
+  <rect x="328" y="176" width="34" height="40" rx="10" fill="#e7dcc1"/>
+
+  <!-- rotary dial -->
+  <circle cx="256" cy="306" r="96" fill="#e7dcc1"/>
+  <circle cx="256" cy="306" r="96" fill="none" stroke="#cdbf9a" stroke-width="6"/>
+  <!-- finger holes -->
+  <g fill="#21305a">
+    <circle cx="256" cy="226" r="13"/>
+    <circle cx="312" cy="244" r="13"/>
+    <circle cx="340" cy="296" r="13"/>
+    <circle cx="326" cy="352" r="13"/>
+    <circle cx="284" cy="384" r="13"/>
+    <circle cx="228" cy="384" r="13"/>
+    <circle cx="186" cy="352" r="13"/>
+    <circle cx="172" cy="296" r="13"/>
+    <circle cx="200" cy="244" r="13"/>
+  </g>
+  <!-- center cap with monogram P -->
+  <circle cx="256" cy="306" r="46" fill="#21305a"/>
+  <text x="256" y="328" font-size="64" font-weight="bold" text-anchor="middle"
+        font-family="DejaVu Sans" fill="#f5ecd7">P</text>
+</svg>

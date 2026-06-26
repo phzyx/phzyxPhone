@@ -16,6 +16,9 @@ Free and open source, licensed under **GPL-2.0-or-later** (see `LICENSE`).
 - **Account & transport**: registrar/auth config; UDP, TCP or TLS transport;
   local port / bound address; per-account SRTP (disabled/optional/mandatory)
   and SRTP signalling requirement.
+- **Caller ID**: set the outgoing **P-Asserted-Identity** and **Remote-Party-ID**
+  headers independently (free-text), on both the Simple and Advanced account
+  views; injected on outgoing INVITEs and saved with the profile.
 - **NAT**: STUN server, ICE enable, TURN (server/user/pass), SDP NAT rewrite.
 - **Codec matrix**: enumerate every codec compiled into pjproject, enable/
   disable each, set priority (0-255), VAD, PLC, frames-per-packet (ptime) and
@@ -26,10 +29,16 @@ Free and open source, licensed under **GPL-2.0-or-later** (see `LICENSE`).
   lines - so you can force a direction (`sendonly`/`inactive`), strip an
   attribute, change `ptime`, inject malformed lines, etc.
 - **Calls**: dial with custom INVITE headers, answer, hang up, hold/unhold,
-  auto-answer with a configurable status code.
+  auto-answer with a configurable status code. Incoming calls ring (with a
+  ringer-volume slider), raise a desktop notification when the window is in the
+  background, and surface an **Answer** button on the Phone tab.
 - **DTMF**: RFC2833 or SIP INFO, configurable signal duration.
 - **Diagnostics**: live RTP/RTCP stream stats (packets, bytes, loss, jitter,
   RTT) and the full PJSIP trace log with export.
+- **Appearance**: an **Application** tab with a theme selector
+  (Light / Dark / System, where *System* follows the OS setting). The last-used
+  profile is reloaded automatically on the next launch, and a desktop launcher
+  with the app icon can be installed via `scripts/install-desktop.sh`.
 
 ## Quick start
 
@@ -63,6 +72,7 @@ Each step can also be run on its own (all live in `scripts/`, driven by
 | `scripts/install-deps.sh` | Installs the toolchain, CMake, Qt 5 Widgets, and the codec/TLS/ALSA dev libraries. Detects apt (Debian/Ubuntu), dnf (Fedora/RHEL) and pacman (Arch). `--dry-run` prints the command only. |
 | `scripts/build-pjproject.sh` | Clones pjproject, writes a `config_site.h` enabling Opus/G.722/iLBC/GSM/Speex/L16, then `configure && make && make install` into `third_party/pjproject-install`. Options: `--ref <tag>` (default `2.17`), `--jobs N`, `--clean`. |
 | `scripts/build.sh` | Configures and builds just the application (assumes pjproject + deps are present). Options: `--jobs N`, `--debug`. |
+| `scripts/install-desktop.sh` | Per-user (no-root) desktop integration: installs the app icon into the hicolor theme and a `phzyxphone.desktop` launcher into `~/.local/share`, pointing `Exec=` at your built binary so the dock/launcher shows the phone icon. Override the binary with `BIN=/path/to/phzyxphone`. |
 
 Useful flags on `bootstrap.sh`: `--skip-deps` (deps already installed) and
 `--skip-pjproject` (reuse an existing pjproject build).
@@ -104,19 +114,42 @@ in-repo one, make sure its `lib/pkgconfig` is on `PKG_CONFIG_PATH` so
 To use Qt 6 instead of Qt 5, install `qt6-base-dev`; CMake prefers Qt 6
 automatically when both are present.
 
+## Desktop integration (icon in the dock / launcher)
+
+The app runs fine straight from `./build/phzyxphone`, but to get the phone icon
+in your dock or application launcher you need a registered `.desktop` file. For
+a per-user install (no root) that points at your local build:
+
+```bash
+scripts/install-desktop.sh        # or: BIN=/path/to/phzyxphone scripts/install-desktop.sh
+```
+
+This installs the icon into `~/.local/share/icons/hicolor/<size>/apps/` and a
+launcher into `~/.local/share/applications/`. On GNOME/Wayland the dock matches
+a window to its icon by the Wayland app-id (set in `main.cpp`) and the desktop
+file's `StartupWMClass`, not by the window icon - so you may need to log out and
+back in (or restart GNOME Shell) once for the change to take effect.
+
+A system-wide install is also wired into CMake: `cmake --install build` places
+the binary, desktop file and themed icons under the configured prefix.
+
 ## Usage
 
 1. **Account / Transport** tab: choose **Simple** mode for the essentials
    (account, login/password, realm, transport + local port, and the remote
    server host + port) or **Advanced** mode for the full set of knobs (explicit
    ID/registrar URIs, bound address, NAT, SRTP, log level). Switching modes
-   carries your values across. Use **Save profile... / Load profile...** to
-   persist settings as YAML. Press **Start / Register**; the status line shows
-   registration progress.
+   carries your values across. Both modes include a **Caller ID** section for the
+   outgoing **P-Asserted-Identity** and **Remote-Party-ID** headers. Use
+   **Save profile... / Load profile...** to persist settings as YAML; the most
+   recently loaded profile is reloaded automatically on the next launch. Press
+   **Start / Register**; the status line shows registration progress.
 2. **Phone** tab: a traditional dialpad. Type or tap an extension/number (the
-   host and port are filled in from the registrar) and press **Call**; the
-   dialpad sends DTMF during a connected call. Speaker and microphone levels
-   each have a slider and a mute toggle.
+   host and port are filled in from the registrar) and press **Call**, or press
+   **Answer** for an incoming call; the dialpad sends DTMF during a connected
+   call. Speaker, microphone and **ringer** levels each have a slider and a mute
+   toggle. Incoming calls ring and (when the window is in the background) raise a
+   desktop notification.
 3. **Codecs** tab: press **Refresh from endpoint** to load the codec list, edit
    priorities/params, then **Apply all** before placing a call.
 4. **SDP** tab: optionally configure an outgoing-SDP override and press
@@ -126,17 +159,23 @@ automatically when both are present.
    send DTMF, and refresh RTP/RTCP stats during a call.
 6. **Log** tab: the full PJSIP trace at the level chosen on the account tab;
    export it for sharing.
+7. **Application** tab: app-wide preferences. Choose the theme - **Light**,
+   **Dark**, or **System** (which follows your OS light/dark setting and tracks
+   live changes). The choice is remembered between runs.
 
 ## Project layout
 
 ```
 bootstrap.sh            - one-command setup (deps -> pjproject -> app)
-scripts/                - install-deps.sh, build-pjproject.sh, build.sh
-CMakeLists.txt          - Qt + pjproject (pkg-config) build
+scripts/                - install-deps.sh, build-pjproject.sh, build.sh,
+                          install-desktop.sh
+CMakeLists.txt          - Qt + pjproject (pkg-config) build; install + icon rules
+resources/              - app icon (SVG/PNG), Qt .qrc, phzyxphone.desktop,
+                          hicolor icon theme sizes
 src/SipCore.{h,cpp}     - PJSUA2 wrapper: endpoint, account, calls, codecs,
-                          SDP override, DTMF, stats, log capture
+                          SDP override, DTMF, stats, ringing, log capture
 src/MainWindow.{h,cpp}  - Qt GUI (tabbed)
-src/main.cpp            - entry point
+src/main.cpp            - entry point (sets the Wayland app-id for the dock icon)
 third_party/            - pjproject source + install prefix (git-ignored)
 ```
 

@@ -42,6 +42,7 @@ add_executable(phzyxphone
     src/main.cpp
     src/SipCore.cpp
     src/MainWindow.cpp
+    resources/phzyxphone.qrc
 )
 
 target_include_directories(phzyxphone PRIVATE ${PJPROJECT_INCLUDE_DIRS})
@@ -73,4 +74,16 @@ if(PJPROJECT_LIBRARY_DIRS)
     target_link_options(phzyxphone PRIVATE "-Wl,--disable-new-dtags")
 endif()
 
-install(TARGETS phzyxphone RUNTIME DESTINATION bin)
+include(GNUInstallDirs)
+install(TARGETS phzyxphone RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Desktop integration: .desktop entry + themed icons so the dock/launcher
+# shows the phzyxPhone icon (matched via StartupWMClass / Wayland app-id).
+install(FILES resources/phzyxphone.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES resources/icons/hicolor/scalable/apps/phzyxphone.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+foreach(_sz 16 24 32 48 64 128 256)
+    install(FILES resources/icons/hicolor/${_sz}x${_sz}/apps/phzyxphone.png
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_sz}x${_sz}/apps)
+endforeach()
