@@ -16,6 +16,7 @@ class QTableWidget;
 class QPlainTextEdit;
 class QLabel;
 class QTabWidget;
+class QSystemTrayIcon;
 
 // MainWindow: the Qt front-end. Each tab exposes one family of testing knobs.
 class MainWindow : public QMainWindow {
@@ -38,6 +39,9 @@ private slots:
     void onMicLevelChanged(int percent);
     void onSpeakerMuteToggled(bool muted);
     void onMicMuteToggled(bool muted);
+    void onRingLevelChanged(int percent);
+    void onRingMuteToggled(bool muted);
+    void onPhoneAnswer();
     // Codecs
     void onRefreshCodecs();
     void onApplyCodecs();
@@ -119,12 +123,14 @@ private:
 
     // Phone (dialpad) tab
     QLineEdit   *phoneNumberEdit_;
-    QPushButton *phoneCallBtn_, *phoneHangupBtn_;
+    QPushButton *phoneCallBtn_, *phoneAnswerBtn_, *phoneHangupBtn_;
     QComboBox   *phoneDtmfMethodCombo_;
     QLabel      *phoneStatusLabel_;
-    QSlider     *speakerSlider_, *micSlider_;
-    QLabel      *speakerValLabel_, *micValLabel_;
-    QPushButton *speakerMuteBtn_, *micMuteBtn_;
+    QSlider     *speakerSlider_, *micSlider_, *ringSlider_;
+    QLabel      *speakerValLabel_, *micValLabel_, *ringValLabel_;
+    QPushButton *speakerMuteBtn_, *micMuteBtn_, *ringMuteBtn_;
+    QSystemTrayIcon *trayIcon_ = nullptr;   // incoming-call notifications
+    bool         incomingPending_ = false;  // a call is ringing, awaiting answer
     bool         inCall_ = false;       // true when a call is CONFIRMED (media up)
 
     // Codec tab

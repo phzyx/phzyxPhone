@@ -33,6 +33,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("phzyxPhone - PJSIP test softphone");
     resize(900, 680);
     statusBar()->showMessage("Idle. Configure an account and press Start.");
+
+    // Tray icon used to surface incoming-call notifications when the window
+    // is not in the foreground.
+    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        trayIcon_ = new QSystemTrayIcon(this);
+        trayIcon_->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
+        trayIcon_->setToolTip("phzyxPhone");
+        trayIcon_->show();
+    }
 }
 
 MainWindow::~MainWindow() = default;
@@ -272,20 +281,28 @@ QWidget *MainWindow::buildPhoneTab() {
     // Call / hang up ----------------------------------------------------------
     auto *actRow = new QHBoxLayout;
     phoneCallBtn_   = new QPushButton("Call");
+    phoneAnswerBtn_ = new QPushButton("Answer");
     phoneHangupBtn_ = new QPushButton("Hang up");
     phoneCallBtn_->setMinimumHeight(44);
+    phoneAnswerBtn_->setMinimumHeight(44);
     phoneHangupBtn_->setMinimumHeight(44);
     phoneCallBtn_->setStyleSheet(
         "QPushButton{background:#2e7d32;color:white;font-weight:bold;border-radius:6px;}"
         "QPushButton:disabled{background:#9e9e9e;}");
+    phoneAnswerBtn_->setStyleSheet(
+        "QPushButton{background:#1565c0;color:white;font-weight:bold;border-radius:6px;}"
+        "QPushButton:disabled{background:#9e9e9e;}");
     phoneHangupBtn_->setStyleSheet(
         "QPushButton{background:#c62828;color:white;font-weight:bold;border-radius:6px;}"
         "QPushButton:disabled{background:#9e9e9e;}");
+    phoneAnswerBtn_->setEnabled(false);
     phoneHangupBtn_->setEnabled(false);
     connect(phoneCallBtn_,   &QPushButton::clicked, this, &MainWindow::onPhoneDial);
+    connect(phoneAnswerBtn_, &QPushButton::clicked, this, &MainWindow::onPhoneAnswer);
     connect(phoneHangupBtn_, &QPushButton::clicked, this, &MainWindow::onPhoneHangup);
     connect(phoneNumberEdit_, &QLineEdit::returnPressed, this, &MainWindow::onPhoneDial);
     actRow->addWidget(phoneCallBtn_);
+    actRow->addWidget(phoneAnswerBtn_);
     actRow->addWidget(phoneHangupBtn_);
     outer->addLayout(actRow);
 
@@ -330,6 +347,29 @@ QWidget *MainWindow::buildPhoneTab() {
     levelGrid->addWidget(micSlider_,   1, 1);
     levelGrid->addWidget(micValLabel_, 1, 2);
     levelGrid->addWidget(micMuteBtn_,  1, 3);
+
+    ringSlider_ = new QSlider(Qt::Horizontal);
+    ringSlider_->setRange(0, 200);
+    ringSlider_->setValue(80);
+    ringSlider_->setToolTip("Ringer volume for incoming calls");
+    ringValLabel_ = new QLabel("80%");
+    ringValLabel_->setMinimumWidth(44);
+    ringValLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    connect(ringSlider_, &QSlider::valueChanged,
+            this, &MainWindow::onRingLevelChanged);
+    ringMuteBtn_ = new QPushButton("Mute");
+    ringMuteBtn_->setCheckable(true);
+    ringMuteBtn_->setFixedWidth(76);
+    connect(ringMuteBtn_, &QPushButton::toggled,
+            this, &MainWindow::onRingMuteToggled);
+    levelGrid->addWidget(new QLabel("\U0001F514 Ring"), 2, 0);
+    levelGrid->addWidget(ringSlider_,   2, 1);
+    levelGrid->addWidget(ringValLabel_, 2, 2);
+    levelGrid->addWidget(ringMuteBtn_,  2, 3);
+    // Seed the core with the initial ringer level (setValue above was set
+    // before the signal was connected, so push it explicitly).
+    core_->setRingLevel(ringSlider_->value() / 100.0f);
+
     levelGrid->setColumnStretch(1, 1);
     outer->addWidget(levelBox);
 
@@ -940,6 +980,13 @@ void MainWindow::onPhoneDial() {
     phoneStatusLabel_->setText("Calling " + uri);
 }
 
+void MainWindow::onPhoneAnswer() {
+    core_->answerCurrent(200);
+    incomingPending_ = false;
+    phoneAnswerBtn_->setEnabled(false);
+    phoneStatusLabel_->setText("Answering...");
+}
+
 void MainWindow::onPhoneHangup() {
     core_->hangupCurrent(603);
 }
@@ -970,6 +1017,19 @@ void MainWindow::onMicMuteToggled(bool muted) {
     micSlider_->setEnabled(!muted);
     micValLabel_->setEnabled(!muted);
     core_->setMicLevel(muted ? 0.0f : micSlider_->value() / 100.0f);
+}
+
+void MainWindow::onRingLevelChanged(int percent) {
+    ringValLabel_->setText(QString::number(percent) + "%");
+    if (!ringMuteBtn_->isChecked())
+        core_->setRingLevel(percent / 100.0f);
+}
+
+void MainWindow::onRingMuteToggled(bool muted) {
+    ringMuteBtn_->setText(muted ? "Unmute" : "Mute");
+    ringSlider_->setEnabled(!muted);
+    ringValLabel_->setEnabled(!muted);
+    core_->setRingLevel(muted ? 0.0f : ringSlider_->value() / 100.0f);
 }
 
 // ===========================================================================
@@ -1134,7 +1194,13 @@ void MainWindow::handleCallState(const QString &state, const QString &remote,
     const bool disconnected = state.compare("DISCONNECTED", Qt::CaseInsensitive) == 0;
     const bool active = !disconnected && !state.isEmpty();
     inCall_ = state.compare("CONFIRMED", Qt::CaseInsensitive) == 0;
+    // The Answer button is live only while the call is still ringing.
+    const bool ringingState =
+        state.compare("INCOMING", Qt::CaseInsensitive) == 0 ||
+        state.compare("EARLY",    Qt::CaseInsensitive) == 0;
+    if (!ringingState) incomingPending_ = false;
     if (phoneCallBtn_)   phoneCallBtn_->setEnabled(!active);
+    if (phoneAnswerBtn_) phoneAnswerBtn_->setEnabled(incomingPending_ && ringingState);
     if (phoneHangupBtn_) phoneHangupBtn_->setEnabled(active);
     if (phoneStatusLabel_)
         phoneStatusLabel_->setText(
@@ -1154,8 +1220,21 @@ void MainWindow::handleSdp(const QString &label, const QString &sdp) {
 void MainWindow::handleIncoming(const QString &remote) {
     callStateLabel_->setText("Incoming call from " + remote);
     statusBar()->showMessage("Incoming call from " + remote);
-    if (!autoAnswerCheck_->isChecked())
-        QApplication::beep();
+
+    if (autoAnswerCheck_->isChecked())
+        return;   // auto-answered: no ringing, notification or Answer prompt
+
+    incomingPending_ = true;
+    if (phoneAnswerBtn_) phoneAnswerBtn_->setEnabled(true);
+    if (phoneStatusLabel_) phoneStatusLabel_->setText("Incoming call from " + remote);
+
+    // Surface the call when the app is not in the foreground.
+    if (trayIcon_)
+        trayIcon_->showMessage("Incoming call", "Call from " + remote,
+                               QSystemTrayIcon::Information, 20000);
+    QApplication::alert(this);          // flash the taskbar entry
+    if (!isActiveWindow())
+        QApplication::beep();           // fallback audible cue
 }
 
 void MainWindow::handleError(const QString &msg) {

@@ -129,6 +129,14 @@ public:
     float micLevel() const { return micLevel_; }
     void  applyAudioLevels();             // push stored levels to the device
 
+    // Ringer (local ringing for incoming calls) --------------------------
+    // Uses a PJSIP tone generator played to the speaker. Ring level follows
+    // the same convention as the other audio levels (1.0 = unchanged).
+    void  startRinging();
+    void  stopRinging();
+    void  setRingLevel(float level);
+    float ringLevel() const { return ringLevel_; }
+
     // Behaviour -----------------------------------------------------------
     void setAutoAnswer(bool on, int code) { autoAnswer_ = on; autoAnswerCode_ = code; }
     void setSdpOverride(const SdpOverride &o) { sdpOverride_ = o; }
@@ -186,4 +194,9 @@ private:
     float micLevel_     = 1.0f;
     QString callerPai_;          // P-Asserted-Identity for outgoing calls
     QString callerRpid_;         // Remote-Party-ID for outgoing calls
+
+    // Local ringer for incoming calls.
+    std::unique_ptr<pj::ToneGenerator> ringGen_;
+    float ringLevel_ = 0.8f;     // ringer volume (1.0 = unchanged)
+    bool  ringing_   = false;
 };

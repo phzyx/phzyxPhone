@@ -61,6 +61,9 @@ public:
         core_->setCurrentCall(call);
         core_->reportIncoming(call, QString::fromStdString(ci.remoteUri));
 
+        if (!core_->autoAnswerEnabled())
+            core_->startRinging();
+
         if (core_->autoAnswerEnabled()) {
             CallOpParam op;
             op.statusCode = (pjsip_status_code)core_->autoAnswerCode();
@@ -83,6 +86,12 @@ void MyCall::onCallState(OnCallStateParam &prm) {
     core_->reportCallState(QString::fromStdString(ci.stateText),
                            QString::fromStdString(ci.remoteUri),
                            QString::fromStdString(ci.lastReason));
+    // Local ringing stops as soon as the call is answered or torn down;
+    // it continues through INCOMING / EARLY.
+    if (ci.state == PJSIP_INV_STATE_CONNECTING ||
+        ci.state == PJSIP_INV_STATE_CONFIRMED  ||
+        ci.state == PJSIP_INV_STATE_DISCONNECTED)
+        core_->stopRinging();
     if (ci.state == PJSIP_INV_STATE_DISCONNECTED) {
         if (core_->currentCall() == this)
             core_->setCurrentCall(nullptr);
@@ -278,6 +287,8 @@ void SipCore::shutdown() {
     if (!created_) return;
     try {
         currentCall_ = nullptr;
+        stopRinging();
+        ringGen_.reset();   // release the tone generator before libDestroy
         account_.reset();
         ep_.libDestroy();   // this also `delete`s the log writer pjproject owns
     } catch (...) { /* ignore */ }
@@ -467,6 +478,59 @@ void SipCore::applyAudioLevels() {
         // are stored and will be re-applied from onCallMediaState().
         reportLog(QString("audio level apply deferred: %1")
                       .arg(QString::fromStdString(e.info())));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ringer: a looping tone played to the speaker while an incoming call rings.
+// ---------------------------------------------------------------------------
+void SipCore::startRinging() {
+    if (!started_ || ringing_) return;
+    registerThread();
+    try {
+        if (!ringGen_) {
+            ringGen_ = std::make_unique<ToneGenerator>();
+            ringGen_->createToneGenerator();   // default 16 kHz / mono
+        }
+        // Classic ring cadence: 440+480 Hz, 2 s on / 4 s off, looping.
+        ToneDesc t;
+        t.freq1   = 440;
+        t.freq2   = 480;
+        t.on_msec = 2000;
+        t.off_msec= 4000;
+        ToneDescVector tones;
+        tones.push_back(t);
+        ringGen_->play(tones, true /* loop */);
+        ringGen_->startTransmit(ep_.audDevManager().getPlaybackDevMedia());
+        ringGen_->adjustTxLevel(ringLevel_);
+        ringing_ = true;
+    } catch (Error &e) {
+        reportLog(QString("ring start failed: %1")
+                      .arg(QString::fromStdString(e.info())));
+    }
+}
+
+void SipCore::stopRinging() {
+    if (!ringing_) return;
+    registerThread();
+    try {
+        if (ringGen_) {
+            ringGen_->stopTransmit(ep_.audDevManager().getPlaybackDevMedia());
+            ringGen_->stop();
+        }
+    } catch (Error &e) {
+        reportLog(QString("ring stop failed: %1")
+                      .arg(QString::fromStdString(e.info())));
+    }
+    ringing_ = false;
+}
+
+void SipCore::setRingLevel(float level) {
+    ringLevel_ = level;
+    if (ringing_ && ringGen_) {
+        registerThread();
+        try { ringGen_->adjustTxLevel(ringLevel_); }
+        catch (Error &) { /* device may be transitioning; ignore */ }
     }
 }
 
