@@ -167,7 +167,9 @@ the binary, desktop file and themed icons under the configured prefix.
    does not ring the Phone tab). The left list shows one thread per remote peer
    (the active session is marked); select one to read its history. With a
    session up, type in the box and press Enter/Send to transmit text, and
-   incoming text appears live. **Delete conversation** removes a thread's
+   incoming text appears live. **End session** terminates the active session
+   (history is kept) and **Restart session** ends it and re-establishes a fresh
+   one with the selected peer. **Delete conversation** removes a thread's
    stored history. Threads are saved in a local SQLite database recorded in the
    active profile (see the **Application** tab for the retention limit).
 4. **Codecs** tab: press **Refresh from endpoint** to load the codec list, edit

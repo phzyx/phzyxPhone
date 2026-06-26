@@ -1476,6 +1476,25 @@ QWidget *MainWindow::buildConversationsTab() {
     convView_->setOpenExternalLinks(false);
     rv->addWidget(convView_, 1);
 
+    // Session controls: terminate the active text session, or (re)start a
+    // session with the selected conversation's peer.
+    auto *ctlRow = new QHBoxLayout;
+    convEndBtn_ = new QPushButton("End session");
+    convEndBtn_->setToolTip("Terminate the active real-time-text session.");
+    convEndBtn_->setEnabled(false);
+    connect(convEndBtn_, &QPushButton::clicked,
+            this, &MainWindow::onEndTextSession);
+    convRestartBtn_ = new QPushButton("Restart session");
+    convRestartBtn_->setToolTip(
+        "End any active session and start a fresh one with this peer.");
+    convRestartBtn_->setEnabled(false);
+    connect(convRestartBtn_, &QPushButton::clicked,
+            this, &MainWindow::onRestartTextSession);
+    ctlRow->addWidget(convEndBtn_);
+    ctlRow->addWidget(convRestartBtn_);
+    ctlRow->addStretch(1);
+    rv->addLayout(ctlRow);
+
     auto *inRow = new QHBoxLayout;
     convInput_ = new QLineEdit;
     convInput_->setPlaceholderText("Type real-time text and press Enter to send");
@@ -1541,7 +1560,8 @@ void MainWindow::refreshConvList() {
 
 void MainWindow::showConversation(const QString &peerKey) {
     convCurrentPeer_ = peerKey;
-    if (convDeleteBtn_) convDeleteBtn_->setEnabled(!peerKey.isEmpty());
+    if (convDeleteBtn_)  convDeleteBtn_->setEnabled(!peerKey.isEmpty());
+    if (convRestartBtn_) convRestartBtn_->setEnabled(!peerKey.isEmpty());
     if (!convView_ || !convStore_) return;
     convView_->clear();
     QString html;
@@ -1641,6 +1661,43 @@ void MainWindow::onAcceptTextCall() {
     if (convInput_) convInput_->setFocus();
 }
 
+// Terminate the active text session (the conversation history is kept).
+void MainWindow::onEndTextSession() {
+    core_->hangupTextSession();
+    statusBar()->showMessage("Ending text session", 4000);
+}
+
+// End any active session, then start a fresh one with the selected peer.
+void MainWindow::onRestartTextSession() {
+    const QString peer = convCurrentPeer_.isEmpty() ? convActivePeer_
+                                                     : convCurrentPeer_;
+    if (peer.isEmpty()) {
+        QMessageBox::information(this, "No conversation",
+            "Select a conversation to restart, or start a new one.");
+        return;
+    }
+    if (!core_->isRunning()) {
+        QMessageBox::information(this, "Not running",
+            "Start the endpoint on the Account / Transport tab first.");
+        return;
+    }
+    // Tear down any in-progress session first; starting a new one re-points the
+    // core's text-session handle, and the old call cleans itself up on
+    // DISCONNECTED.
+    if (!convActivePeer_.isEmpty())
+        core_->hangupTextSession();
+
+    QString err;
+    if (!core_->startTextSession(peer, err)) {
+        QMessageBox::warning(this, "Conversation failed", err);
+        return;
+    }
+    showConversation(normalizePeerKey(peer));
+    refreshConvList();
+    if (convInput_) convInput_->setFocus();
+    statusBar()->showMessage("Restarting conversation with " + peer, 4000);
+}
+
 // State changes for the active text session (separate from media calls).
 void MainWindow::handleTextCallState(const QString &state, const QString &peer,
                                      const QString &reason) {
@@ -1667,6 +1724,8 @@ void MainWindow::handleTextCallState(const QString &state, const QString &peer,
     // Text can only be sent once the session is up.
     if (convInput_)   convInput_->setEnabled(active);
     if (convSendBtn_) convSendBtn_->setEnabled(active);
+    // The End button is live only while a session is active.
+    if (convEndBtn_)  convEndBtn_->setEnabled(active);
 }
 
 void MainWindow::onConversationSelected() {

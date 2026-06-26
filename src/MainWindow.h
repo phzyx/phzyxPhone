@@ -52,6 +52,8 @@ private slots:
     void onRttSend();
     void onNewConversation();
     void onAcceptTextCall();
+    void onEndTextSession();
+    void onRestartTextSession();
     void onConversationSelected();
     void onDeleteConversation();
     void onConvDepthChanged(int depth);
@@ -180,7 +182,8 @@ private:
     QTextBrowser*convView_ = nullptr;
     QLineEdit   *convInput_ = nullptr;
     QPushButton *convSendBtn_ = nullptr, *convDeleteBtn_ = nullptr,
-                *convNewBtn_ = nullptr, *convAcceptBtn_ = nullptr;
+                *convNewBtn_ = nullptr, *convAcceptBtn_ = nullptr,
+                *convEndBtn_ = nullptr, *convRestartBtn_ = nullptr;
     QLabel      *convDbLabel_ = nullptr;
     QLabel      *convBannerLabel_ = nullptr;  // "incoming text session" banner
     QString      convCurrentPeer_;      // selected conversation key
