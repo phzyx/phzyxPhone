@@ -46,6 +46,10 @@ struct AccountSettings {
     QString pAssertedIdentity;   // P-Asserted-Identity header value, empty = off
     QString remotePartyId;       // Remote-Party-ID header value, empty = off
 
+    // Real-time text (RTT): path to the local SQLite conversation database
+    // for this profile. Empty = use the application default location.
+    QString conversationDb;
+
     // SRTP: 0=disabled 1=optional 2=mandatory
     int     srtpUse = 0;
     // SRTP secure signalling requirement: 0=none 1=tls 2=end-to-end sips
@@ -120,6 +124,11 @@ public:
     void sendDtmf(const QString &digits, int method, unsigned durationMs);
     QString currentStreamStats();
 
+    // Real-time text (RFC 4103 / T.140) ----------------------------------
+    // Send a block of real-time text on the current call's text stream.
+    // No-op when there is no active call or the call has no text media.
+    void sendRtt(const QString &text);
+
     // Audio levels --------------------------------------------------------
     // level: 0.0 = mute, 1.0 = unchanged, >1.0 = amplify. Stored and
     // re-applied to the sound device whenever media becomes active.
@@ -154,6 +163,8 @@ public:
     void reportMediaState(const QString &info);
     void reportSdp(const QString &label, const QString &sdp);
     void reportIncoming(MyCall *call, const QString &remote);
+    // Forward an incoming RTT block (peer = call's remote URI) to the GUI.
+    void reportRxText(MyCall *call, const QString &peer, const QString &text);
     bool autoAnswerEnabled() const { return autoAnswer_; }
     int  autoAnswerCode() const { return autoAnswerCode_; }
     void registerThread();        // register current thread with PJSIP
@@ -169,6 +180,9 @@ signals:
     void sdpCaptured(const QString &label, const QString &sdp);
     void incomingCall(const QString &remote);
     void errorOccurred(const QString &message);
+    // Real-time text: a block was received from / sent to a remote peer.
+    void rttReceived(const QString &peer, const QString &text);
+    void rttSent(const QString &peer, const QString &text);
 
 private:
     pj::Endpoint ep_;

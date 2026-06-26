@@ -37,6 +37,7 @@ public:
     void onCallMediaState(OnCallMediaStateParam &prm) override;
     void onCallSdpCreated(OnCallSdpCreatedParam &prm) override;
     void onDtmfDigit(OnDtmfDigitParam &prm) override;
+    void onCallRxText(OnCallRxTextParam &prm) override;
 
 private:
     SipCore *core_;
@@ -146,6 +147,14 @@ void MyCall::onCallSdpCreated(OnCallSdpCreatedParam &prm) {
 void MyCall::onDtmfDigit(OnDtmfDigitParam &prm) {
     core_->reportLog(QString("DTMF received: %1")
                          .arg(QString::fromStdString(prm.digit)));
+}
+
+void MyCall::onCallRxText(OnCallRxTextParam &prm) {
+    // RFC 4103 text blocks can be empty (idle / keep-alive); ignore those.
+    if (prm.text.empty()) return;
+    CallInfo ci = getInfo();
+    core_->reportRxText(this, QString::fromStdString(ci.remoteUri),
+                        QString::fromStdString(prm.text));
 }
 
 // ===========================================================================
@@ -357,6 +366,9 @@ bool SipCore::makeCall(const QString &destUri,
     try {
         auto *call = new MyCall(*account_, this);
         CallOpParam prm(true /* use default call settings */);
+        // Negotiate audio + a real-time text (T.140) stream on the INVITE.
+        prm.opt.audioCount = 1;
+        prm.opt.textCount  = 1;
         // Caller ID identity headers (only when configured).
         if (!callerPai_.isEmpty()) {
             SipHeader sh;
@@ -449,6 +461,24 @@ void SipCore::sendDtmf(const QString &digits, int method, unsigned durationMs) {
         currentCall_->sendDtmf(p);
     } catch (Error &e) {
         reportLog(QString("DTMF send failed: %1")
+                      .arg(QString::fromStdString(e.info())));
+    }
+}
+
+// --- Real-time text (RFC 4103 / T.140) -------------------------------------
+void SipCore::sendRtt(const QString &text) {
+    if (!currentCall_ || text.isEmpty()) return;
+    registerThread();
+    try {
+        CallInfo ci = currentCall_->getInfo();
+        const QString peer = QString::fromStdString(ci.remoteUri);
+        CallSendTextParam p;
+        p.medIdx = -1;                 // first (default) text stream
+        p.text   = text.toStdString();
+        currentCall_->sendText(p);
+        emit rttSent(peer, text);
+    } catch (Error &e) {
+        reportLog(QString("RTT send failed: %1")
                       .arg(QString::fromStdString(e.info())));
     }
 }
@@ -602,4 +632,7 @@ void SipCore::reportSdp(const QString &label, const QString &sdp) {
 }
 void SipCore::reportIncoming(MyCall *, const QString &remote) {
     emit incomingCall(remote);
+}
+void SipCore::reportRxText(MyCall *, const QString &peer, const QString &text) {
+    emit rttReceived(peer, text);
 }

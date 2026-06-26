@@ -22,3 +22,10 @@ compile_commands.json
 *.log
 *.pcap
 *.pcapng
+
+# Local RTT conversation databases (may contain message history / addresses).
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite

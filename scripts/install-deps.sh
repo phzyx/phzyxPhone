@@ -48,7 +48,7 @@ case "$FAMILY" in
         run $SUDO apt-get update || echo ">> apt-get update reported errors (continuing)"
         run $SUDO apt-get install -y \
             build-essential cmake pkg-config git \
-            qtbase5-dev qtbase5-dev-tools \
+            qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite \
             libasound2-dev libssl-dev \
             libopus-dev libgsm1-dev libspeex-dev libspeexdsp-dev
         ;;
@@ -70,7 +70,7 @@ case "$FAMILY" in
     *)
         echo "Unsupported distro. Install these manually:" >&2
         echo "  C++ toolchain, cmake, pkg-config, git, make" >&2
-        echo "  Qt5 base/Widgets dev, ALSA dev, OpenSSL dev" >&2
+        echo "  Qt5 base/Widgets/Sql dev + SQLite driver, ALSA dev, OpenSSL dev" >&2
         echo "  Opus dev, Speex dev, GSM dev (codecs, optional)" >&2
         exit 1
         ;;

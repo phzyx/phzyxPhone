@@ -14,6 +14,10 @@ enum CodecCol {
     COL_PRIO, COL_VAD, COL_PLC, COL_FPP, COL_BPS, COL_COUNT
 };
 
+// Normalise a SIP remote (e.g. '"Bob" <sip:bob@h:5060;tag=x>') to a stable
+// conversation key ('sip:bob@h'). Defined near the Conversations code below.
+static QString normalizePeerKey(const QString &raw);
+
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     core_ = new SipCore(this);
 
@@ -34,10 +38,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(core_, &SipCore::sdpCaptured,        this, &MainWindow::handleSdp);
     connect(core_, &SipCore::incomingCall,       this, &MainWindow::handleIncoming);
     connect(core_, &SipCore::errorOccurred,      this, &MainWindow::handleError);
+    connect(core_, &SipCore::rttReceived,        this, &MainWindow::handleRttReceived);
+    connect(core_, &SipCore::rttSent,            this, &MainWindow::handleRttSent);
 
     tabs_ = new QTabWidget(this);
     tabs_->addTab(buildAccountTab(), "Account / Transport");
     tabs_->addTab(buildPhoneTab(),   "Phone");
+    tabs_->addTab(buildConversationsTab(), "Conversations");
     tabs_->addTab(buildCodecTab(),   "Codecs");
     tabs_->addTab(buildCallTab(),    "Call");
     tabs_->addTab(buildSdpTab(),     "SDP");
@@ -59,6 +66,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     }
 
     applyTheme(themeMode_);
+
+    // Open the default conversation database so the Conversations tab works
+    // even before any profile is loaded; a loaded profile may repoint it.
+    openConversationDb(defaultConvDbPath());
 
     // Restore the most recently used profile, if one is still on disk.
     const QString lastProfile = QSettings().value("lastProfile").toString();
@@ -98,6 +109,28 @@ QWidget *MainWindow::buildApplicationTab() {
     form->addRow(hint);
 
     outer->addWidget(appearance);
+
+    // --- Conversations (RTT history) ---------------------------------------
+    auto *conv = new QGroupBox("Conversations");
+    auto *cform = new QFormLayout(conv);
+    convDepthSpin_ = new QSpinBox;
+    convDepthSpin_->setRange(0, 1000000);
+    convDepthSpin_->setSingleStep(50);
+    convDepthSpin_->setSpecialValueText("Unlimited");   // shown when value == 0
+    convDepthSpin_->setValue(QSettings().value("convMaxDepth", 500).toInt());
+    convDepthSpin_->setToolTip("Maximum real-time-text messages kept per "
+                               "conversation. 0 = unlimited.");
+    connect(convDepthSpin_, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &MainWindow::onConvDepthChanged);
+    cform->addRow("Max messages / conversation", convDepthSpin_);
+    auto *chint = new QLabel(
+        "Real-time-text history is stored in a local database recorded in the "
+        "active profile. Older messages beyond this limit are trimmed.");
+    chint->setWordWrap(true);
+    chint->setStyleSheet("color: gray;");
+    cform->addRow(chint);
+    outer->addWidget(conv);
+
     return w;
 }
 
@@ -710,6 +743,7 @@ AccountSettings MainWindow::collectAccountSettings() const {
     s.sdpNatRewrite= sdpRewriteCheck_->isChecked();
     s.srtpUse      = srtpCombo_->currentIndex();
     s.srtpSignaling= srtpSignalCombo_->currentIndex();
+    s.conversationDb = convDbPath_;   // RTT history database pointer
     return s;
 }
 
@@ -821,6 +855,7 @@ QString writeProfileYaml(const AccountSettings &s, int logLevel) {
     o += "sdpNatRewrite: "  + boolStr(s.sdpNatRewrite)   + "\n";
     o += "srtpUse: "        + QString::number(s.srtpUse)        + "\n";
     o += "srtpSignaling: "  + QString::number(s.srtpSignaling)  + "\n";
+    o += "conversationDb: " + yamlScalar(s.conversationDb)        + "\n";
     o += "logLevel: "       + QString::number(logLevel)         + "\n";
     return o;
 }
@@ -856,6 +891,7 @@ bool parseProfileYaml(const QString &text, AccountSettings &s, int &logLevel) {
         else if (key == "sdpNatRewrite") s.sdpNatRewrite = toBool(val);
         else if (key == "srtpUse")       s.srtpUse = val.toInt();
         else if (key == "srtpSignaling") s.srtpSignaling = val.toInt();
+        else if (key == "conversationDb") s.conversationDb = val;
         else if (key == "logLevel")      logLevel = val.toInt();
         else continue;
         ++matched;
@@ -963,6 +999,9 @@ void MainWindow::applyAccountSettings(const AccountSettings &s, int logLevel) {
     if (li >= 0) logLevelCombo_->setCurrentIndex(li);
     // Keep the Simple view in step with the freshly-loaded values.
     syncAdvancedToSimple();
+    // Point the Conversations tab at this profile's history database (the
+    // default within-install location when the profile does not specify one).
+    openConversationDb(s.conversationDb);
 }
 
 void MainWindow::onSaveProfile() {
@@ -1316,6 +1355,22 @@ void MainWindow::handleCallState(const QString &state, const QString &remote,
         phoneStatusLabel_->setText(
             disconnected ? QString("Idle. %1").arg(reason).trimmed()
                          : QString("%1  %2").arg(state, remote).trimmed());
+
+    // Conversations tab: RTT can only flow on an active call. Track the peer
+    // and, when a call comes up, focus its conversation thread.
+    if (active && !remote.isEmpty()) {
+        const QString key = normalizePeerKey(remote);
+        if (key != convActivePeer_) {
+            convActivePeer_ = key;
+            // Focus this peer's thread (it may be empty until the first block).
+            showConversation(key);
+            refreshConvList();
+        }
+    } else if (disconnected) {
+        convActivePeer_.clear();
+    }
+    if (convInput_)   convInput_->setEnabled(active);
+    if (convSendBtn_) convSendBtn_->setEnabled(active);
 }
 
 void MainWindow::handleMedia(const QString &info) {
@@ -1349,4 +1404,239 @@ void MainWindow::handleIncoming(const QString &remote) {
 
 void MainWindow::handleError(const QString &msg) {
     QMessageBox::warning(this, "Error", msg);
+}
+
+// ===========================================================================
+// Conversations (real-time text / RFC 4103) tab
+// ===========================================================================
+
+// Normalise a SIP remote into a stable conversation key. Strips a display
+// name, the angle brackets, URI parameters and a default port, lower-casing
+// the result: '"Bob" <sip:Bob@Host:5060;tag=1>' -> 'sip:bob@host'.
+static QString normalizePeerKey(const QString &raw) {
+    QString u = raw.trimmed();
+    int lt = u.indexOf('<');
+    if (lt >= 0) {
+        int gt = u.indexOf('>', lt + 1);
+        u = u.mid(lt + 1, gt > lt ? gt - lt - 1 : -1);
+    }
+    u = u.trimmed();
+    int sc = u.indexOf(';'); if (sc >= 0) u = u.left(sc);   // drop ;params
+    int qm = u.indexOf('?');  if (qm >= 0) u = u.left(qm);   // drop ?headers
+    // Drop a trailing :5060 default port for a tidier key.
+    if (u.endsWith(":5060")) u.chop(5);
+    return u.toLower();
+}
+
+QString MainWindow::defaultConvDbPath() const {
+    // Live "within the install": a data/ folder next to the executable. This
+    // path is git-ignored. A profile may override it via its YAML.
+    return QCoreApplication::applicationDirPath() + "/data/conversations.db";
+}
+
+QWidget *MainWindow::buildConversationsTab() {
+    auto *w = new QWidget;
+    auto *outer = new QVBoxLayout(w);
+
+    auto *split = new QSplitter(Qt::Horizontal, w);
+
+    // Left: the list of conversations (per remote peer).
+    auto *left = new QWidget;
+    auto *lv = new QVBoxLayout(left);
+    lv->setContentsMargins(0, 0, 0, 0);
+    lv->addWidget(new QLabel("Conversations"));
+    convNewBtn_ = new QPushButton("New conversation\u2026");
+    convNewBtn_->setToolTip("Start a real-time-text session by calling a peer.");
+    connect(convNewBtn_, &QPushButton::clicked,
+            this, &MainWindow::onNewConversation);
+    lv->addWidget(convNewBtn_);
+    convList_ = new QListWidget;
+    convList_->setMinimumWidth(200);
+    connect(convList_, &QListWidget::itemSelectionChanged,
+            this, &MainWindow::onConversationSelected);
+    lv->addWidget(convList_, 1);
+    convDeleteBtn_ = new QPushButton("Delete conversation");
+    convDeleteBtn_->setEnabled(false);
+    connect(convDeleteBtn_, &QPushButton::clicked,
+            this, &MainWindow::onDeleteConversation);
+    lv->addWidget(convDeleteBtn_);
+    split->addWidget(left);
+
+    // Right: transcript + input row.
+    auto *right = new QWidget;
+    auto *rv = new QVBoxLayout(right);
+    rv->setContentsMargins(0, 0, 0, 0);
+    convView_ = new QTextBrowser;
+    convView_->setOpenExternalLinks(false);
+    rv->addWidget(convView_, 1);
+
+    auto *inRow = new QHBoxLayout;
+    convInput_ = new QLineEdit;
+    convInput_->setPlaceholderText("Type real-time text and press Enter to send");
+    convInput_->setEnabled(false);
+    connect(convInput_, &QLineEdit::returnPressed, this, &MainWindow::onRttSend);
+    convSendBtn_ = new QPushButton("Send");
+    convSendBtn_->setEnabled(false);
+    connect(convSendBtn_, &QPushButton::clicked, this, &MainWindow::onRttSend);
+    inRow->addWidget(convInput_, 1);
+    inRow->addWidget(convSendBtn_);
+    rv->addLayout(inRow);
+    split->addWidget(right);
+
+    split->setStretchFactor(0, 0);
+    split->setStretchFactor(1, 1);
+    outer->addWidget(split, 1);
+
+    convDbLabel_ = new QLabel;
+    convDbLabel_->setStyleSheet("color: gray;");
+    convDbLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    outer->addWidget(convDbLabel_);
+
+    return w;
+}
+
+// (Re)open the SQLite database and refresh the tab. Empty path -> default.
+void MainWindow::openConversationDb(const QString &path) {
+    const QString p = path.isEmpty() ? defaultConvDbPath() : path;
+    convDbPath_ = p;
+    if (!convStore_) convStore_ = new ConvStore(this);
+    convStore_->setMaxDepth(QSettings().value("convMaxDepth", 500).toInt());
+    QString err;
+    if (!convStore_->open(p, err)) {
+        if (convDbLabel_)
+            convDbLabel_->setText("Conversation DB error: " + err);
+        return;
+    }
+    if (convDbLabel_) convDbLabel_->setText("History database: " + p);
+    convCurrentPeer_.clear();
+    if (convView_) convView_->clear();
+    refreshConvList();
+}
+
+void MainWindow::refreshConvList() {
+    if (!convList_ || !convStore_) return;
+    const QString keep = convCurrentPeer_;
+    QSignalBlocker block(convList_);
+    convList_->clear();
+    int selRow = -1;
+    const QList<ConvPeer> ps = convStore_->peers();
+    for (int i = 0; i < ps.size(); ++i) {
+        const ConvPeer &p = ps[i];
+        const bool live = (p.peer == convActivePeer_);
+        QString label = (live ? "\u25CF " : "") + p.display +
+                        QString("  (%1)").arg(p.count);
+        auto *it = new QListWidgetItem(label);
+        it->setData(Qt::UserRole, p.peer);
+        convList_->addItem(it);
+        if (p.peer == keep) selRow = i;
+    }
+    if (selRow >= 0) convList_->setCurrentRow(selRow);
+}
+
+void MainWindow::showConversation(const QString &peerKey) {
+    convCurrentPeer_ = peerKey;
+    if (convDeleteBtn_) convDeleteBtn_->setEnabled(!peerKey.isEmpty());
+    if (!convView_ || !convStore_) return;
+    convView_->clear();
+    QString html;
+    for (const ConvMessage &m : convStore_->messages(peerKey)) {
+        const QString when =
+            QDateTime::fromMSecsSinceEpoch(m.ts).toString("HH:mm:ss");
+        const bool out = (m.direction == "out");
+        const QString who = out ? "you" : "them";
+        const QString color = out ? "#3a7bd5" : "#2e9e5b";
+        html += QString("<div><span style='color:gray'>[%1]</span> "
+                        "<b style='color:%2'>%3:</b> %4</div>")
+                    .arg(when, color, who, m.body.toHtmlEscaped());
+    }
+    convView_->setHtml(html);
+    convView_->moveCursor(QTextCursor::End);
+}
+
+// Persist a message and update the UI. Empty text is ignored.
+void MainWindow::recordRtt(const QString &peer, const QString &dir,
+                           const QString &text) {
+    if (!convStore_ || text.isEmpty()) return;
+    const QString key = normalizePeerKey(peer);
+    convStore_->addMessage(key, peer, dir, text);
+    if (key == convCurrentPeer_)
+        showConversation(key);          // re-render the open thread
+    refreshConvList();
+}
+
+void MainWindow::handleRttReceived(const QString &peer, const QString &text) {
+    recordRtt(peer, "in", text);
+}
+
+void MainWindow::handleRttSent(const QString &peer, const QString &text) {
+    recordRtt(peer, "out", text);
+}
+
+void MainWindow::onRttSend() {
+    if (!convInput_) return;
+    const QString text = convInput_->text();
+    if (text.isEmpty()) return;
+    core_->sendRtt(text);               // echoes back via rttSent -> recordRtt
+    convInput_->clear();
+}
+
+void MainWindow::onNewConversation() {
+    if (!core_->isRunning()) {
+        QMessageBox::information(this, "Not running",
+            "Start the endpoint on the Account / Transport tab first.");
+        return;
+    }
+    bool ok = false;
+    const QString who = QInputDialog::getText(
+        this, "New conversation",
+        "Call (extension or sip: URI):", QLineEdit::Normal, QString(), &ok);
+    if (!ok || who.trimmed().isEmpty()) return;
+
+    const QString uri = buildDialUri(who.trimmed());
+    if (uri.isEmpty()) {
+        QMessageBox::warning(this, "Cannot start",
+            "Enter a number, and set a Registrar URI (or an account ID URI "
+            "with a domain) so the host can be filled in.");
+        return;
+    }
+    QString err;
+    if (!core_->makeCall(uri, {}, err)) {
+        QMessageBox::warning(this, "Call failed", err);
+        return;
+    }
+    // Focus the (initially empty) thread for this peer; handleCallState will
+    // mark it active and refresh once the call progresses.
+    showConversation(normalizePeerKey(uri));
+    refreshConvList();
+    if (convInput_) convInput_->setFocus();
+    statusBar()->showMessage("Starting conversation with " + uri, 4000);
+}
+
+void MainWindow::onConversationSelected() {
+    if (!convList_) return;
+    auto *it = convList_->currentItem();
+    if (!it) { showConversation(QString()); return; }
+    showConversation(it->data(Qt::UserRole).toString());
+}
+
+void MainWindow::onDeleteConversation() {
+    if (!convStore_ || convCurrentPeer_.isEmpty()) return;
+    const auto btn = QMessageBox::question(
+        this, "Delete conversation",
+        "Permanently delete the stored history for this conversation?");
+    if (btn != QMessageBox::Yes) return;
+    convStore_->deletePeer(convCurrentPeer_);
+    convCurrentPeer_.clear();
+    if (convView_) convView_->clear();
+    if (convDeleteBtn_) convDeleteBtn_->setEnabled(false);
+    refreshConvList();
+}
+
+void MainWindow::onConvDepthChanged(int depth) {
+    QSettings().setValue("convMaxDepth", depth);
+    if (convStore_) {
+        convStore_->setMaxDepth(depth);     // trims all conversations now
+        if (!convCurrentPeer_.isEmpty()) showConversation(convCurrentPeer_);
+        refreshConvList();
+    }
 }

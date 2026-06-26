@@ -5,6 +5,7 @@
 #include <QMainWindow>
 #include <QPalette>
 #include "SipCore.h"
+#include "ConvStore.h"
 
 class QLineEdit;
 class QComboBox;
@@ -18,6 +19,8 @@ class QPlainTextEdit;
 class QLabel;
 class QTabWidget;
 class QSystemTrayIcon;
+class QListWidget;
+class QTextBrowser;
 
 // MainWindow: the Qt front-end. Each tab exposes one family of testing knobs.
 class MainWindow : public QMainWindow {
@@ -45,6 +48,12 @@ private slots:
     void onRingLevelChanged(int percent);
     void onRingMuteToggled(bool muted);
     void onPhoneAnswer();
+    // Conversations (RTT) tab
+    void onRttSend();
+    void onNewConversation();
+    void onConversationSelected();
+    void onDeleteConversation();
+    void onConvDepthChanged(int depth);
     // Codecs
     void onRefreshCodecs();
     void onApplyCodecs();
@@ -73,6 +82,8 @@ private slots:
     void handleSdp(const QString &label, const QString &sdp);
     void handleIncoming(const QString &remote);
     void handleError(const QString &msg);
+    void handleRttReceived(const QString &peer, const QString &text);
+    void handleRttSent(const QString &peer, const QString &text);
 
 private:
     QWidget *buildAccountTab();
@@ -81,11 +92,19 @@ private:
     QWidget *buildCallTab();
     QWidget *buildSdpTab();
     QWidget *buildLogTab();
+    QWidget *buildConversationsTab();
     AccountSettings collectAccountSettings() const;
     void applyAccountSettings(const AccountSettings &s, int logLevel);
     // Load a profile YAML from disk. When interactive, shows message boxes on
     // failure; otherwise stays quiet (used for the startup auto-load).
     bool loadProfileFile(const QString &fn, bool interactive);
+
+    // Conversations / RTT persistence.
+    QString defaultConvDbPath() const;       // within-install default location
+    void    openConversationDb(const QString &path);  // (re)open + refresh tab
+    void    refreshConvList();               // rebuild the left-hand peer list
+    void    showConversation(const QString &peerKey);  // render transcript
+    void    recordRtt(const QString &peer, const QString &dir, const QString &text);
 
     // Appearance / theming.
     QWidget *buildApplicationTab();
@@ -150,6 +169,19 @@ private:
     QString  defaultStyleName_;
     QComboBox *themeCombo_ = nullptr;
     bool         inCall_ = false;       // true when a call is CONFIRMED (media up)
+
+    // Conversations (RTT) tab
+    ConvStore   *convStore_ = nullptr;
+    QListWidget *convList_ = nullptr;
+    QTextBrowser*convView_ = nullptr;
+    QLineEdit   *convInput_ = nullptr;
+    QPushButton *convSendBtn_ = nullptr, *convDeleteBtn_ = nullptr,
+                *convNewBtn_ = nullptr;
+    QLabel      *convDbLabel_ = nullptr;
+    QString      convCurrentPeer_;      // selected conversation key
+    QString      convActivePeer_;       // peer of the in-progress call (if any)
+    QString      convDbPath_;           // configured DB path (from profile)
+    QSpinBox    *convDepthSpin_ = nullptr;  // on the Application tab
 
     // Codec tab
     QTableWidget *codecTable_;

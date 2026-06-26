@@ -6,7 +6,8 @@ A testing-focused desktop SIP softphone for Linux, written in C++ on top of
 Unlike a consumer softphone, phzyxPhone is built to **poke at SIP/SDP/media
 behaviour**: it exposes the full codec matrix, lets you inspect and rewrite the
 SDP that goes on the wire, switches transports (UDP/TCP/TLS) and SRTP/ICE/STUN/
-TURN modes, sends DTMF by RFC2833 or SIP INFO, and streams the raw PJSIP trace
+TURN modes, sends DTMF by RFC2833 or SIP INFO, exchanges RFC 4103 real-time text, and
+streams the raw PJSIP trace
 log so you can see exactly what is being signalled.
 
 Free and open source, licensed under **GPL-2.0-or-later** (see `LICENSE`).
@@ -32,6 +33,11 @@ Free and open source, licensed under **GPL-2.0-or-later** (see `LICENSE`).
   auto-answer with a configurable status code. Incoming calls ring (with a
   ringer-volume slider), raise a desktop notification when the window is in the
   background, and surface an **Answer** button on the Phone tab.
+- **Real-time text (RTT)**: RFC 4103 / T.140 text streams negotiated alongside
+  audio. A **Conversations** tab lists threads per remote peer; type to send and
+  watch incoming text live. History is persisted to a local SQLite database
+  (path recorded in the profile, so loading a profile restores its history),
+  with a configurable maximum depth and per-conversation delete.
 - **DTMF**: RFC2833 or SIP INFO, configurable signal duration.
 - **Diagnostics**: live RTP/RTCP stream stats (packets, bytes, loss, jitter,
   RTT) and the full PJSIP trace log with export.
@@ -85,13 +91,14 @@ binary's RPATH, so `./build/phzyxphone` runs without setting
 ## Manual build
 
 If you prefer to wire things up yourself, you need a C++17 toolchain,
-CMake >= 3.16, Qt 5 or 6 (Widgets), and pjproject built with the PJSUA2 C++
+CMake >= 3.16, Qt 5 or 6 (Widgets + Sql, with the SQLite driver), and
+pjproject built with the PJSUA2 C++
 bindings.
 
 ```bash
 # system deps (Debian/Ubuntu)
 sudo apt-get install build-essential cmake pkg-config git \
-    qtbase5-dev libasound2-dev libssl-dev \
+    qtbase5-dev libqt5sql5-sqlite libasound2-dev libssl-dev \
     libopus-dev libgsm1-dev libspeex-dev libspeexdsp-dev
 
 # pjproject into the in-repo prefix (what CMake looks for)
@@ -150,18 +157,25 @@ the binary, desktop file and themed icons under the configured prefix.
    call. Speaker, microphone and **ringer** levels each have a slider and a mute
    toggle. Incoming calls ring and (when the window is in the background) raise a
    desktop notification.
-3. **Codecs** tab: press **Refresh from endpoint** to load the codec list, edit
+3. **Conversations** tab: real-time text (RTT). The left list shows one thread
+   per remote peer (the active call is marked); select one to read its history.
+   With a call up, type in the box and press Enter/Send to transmit text, and
+   incoming text appears live. **Delete conversation** removes a thread's stored
+   history. Threads are saved in a local SQLite database recorded in the active
+   profile (see the **Application** tab for the retention limit).
+4. **Codecs** tab: press **Refresh from endpoint** to load the codec list, edit
    priorities/params, then **Apply all** before placing a call.
-4. **SDP** tab: optionally configure an outgoing-SDP override and press
+5. **SDP** tab: optionally configure an outgoing-SDP override and press
    **Apply SDP override settings**. Place a call and watch the captured
    offers/answers appear live.
-5. **Call** tab: dial a URI (with an optional custom header), answer/hang up,
+6. **Call** tab: dial a URI (with an optional custom header), answer/hang up,
    send DTMF, and refresh RTP/RTCP stats during a call.
-6. **Log** tab: the full PJSIP trace at the level chosen on the account tab;
+7. **Log** tab: the full PJSIP trace at the level chosen on the account tab;
    export it for sharing.
-7. **Application** tab: app-wide preferences. Choose the theme - **Light**,
+8. **Application** tab: app-wide preferences. Choose the theme - **Light**,
    **Dark**, or **System** (which follows your OS light/dark setting and tracks
-   live changes). The choice is remembered between runs.
+   live changes). Set the conversation retention limit (**max messages per
+   conversation**; 0 = unlimited). Choices are remembered between runs.
 
 ## Project layout
 
@@ -173,9 +187,11 @@ CMakeLists.txt          - Qt + pjproject (pkg-config) build; install + icon rule
 resources/              - app icon (SVG/PNG), Qt .qrc, phzyxphone.desktop,
                           hicolor icon theme sizes
 src/SipCore.{h,cpp}     - PJSUA2 wrapper: endpoint, account, calls, codecs,
-                          SDP override, DTMF, stats, ringing, log capture
+                          SDP override, DTMF, stats, ringing, RTT, log capture
+src/ConvStore.{h,cpp}   - SQLite store for RTT conversation history
 src/MainWindow.{h,cpp}  - Qt GUI (tabbed)
 src/main.cpp            - entry point (sets the Wayland app-id for the dock icon)
+data/                   - default RTT conversation databases (git-ignored)
 third_party/            - pjproject source + install prefix (git-ignored)
 ```
 
@@ -191,6 +207,10 @@ third_party/            - pjproject source + install prefix (git-ignored)
   build time) and appropriate certificates configured on your server.
 - Audio uses the default ALSA capture/playback device. On headless test rigs
   you can build pjproject with the null audio device.
+- Real-time text requires the remote party to negotiate an `m=text` (T.140)
+  stream; against endpoints that don't, RTT is simply absent. Conversation
+  databases hold message history and addresses, so they are git-ignored by
+  default (`*.db`, `data/`); the profile YAML stores only the database path.
 
 ## Contributing
 

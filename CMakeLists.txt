@@ -19,8 +19,8 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # --- Qt (prefer Qt6, fall back to Qt5) ------------------------------------
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Sql)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Sql)
 message(STATUS "Using Qt${QT_VERSION_MAJOR} (${Qt${QT_VERSION_MAJOR}_VERSION})")
 
 # --- pjproject / PJSUA2 via pkg-config ------------------------------------
@@ -42,6 +42,7 @@ add_executable(phzyxphone
     src/main.cpp
     src/SipCore.cpp
     src/MainWindow.cpp
+    src/ConvStore.cpp
     resources/phzyxphone.qrc
 )
 
@@ -49,6 +50,7 @@ target_include_directories(phzyxphone PRIVATE ${PJPROJECT_INCLUDE_DIRS})
 
 target_link_libraries(phzyxphone PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
+    Qt${QT_VERSION_MAJOR}::Sql
     PkgConfig::PJPROJECT
 )
 
