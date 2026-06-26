@@ -4,6 +4,7 @@
 
 #include <QMainWindow>
 #include <QPalette>
+#include <QHash>
 #include "SipCore.h"
 #include "ConvStore.h"
 
@@ -50,6 +51,7 @@ private slots:
     void onPhoneAnswer();
     // Conversations (RTT) tab
     void onRttSend();
+    void onConvInputEdited(const QString &text);
     void onNewConversation();
     void onAcceptTextCall();
     void onEndTextSession();
@@ -189,6 +191,11 @@ private:
     QString      convCurrentPeer_;      // selected conversation key
     QString      convActivePeer_;       // peer of the active text session (if any)
     QString      convPendingPeer_;      // peer of a pending incoming text session
+    // Real-time "composing" buffers (the line currently being typed, not yet
+    // committed to history). Outgoing mirrors what we have transmitted on the
+    // active session; incoming accumulates per peer until a line break.
+    QString      convComposingOut_;
+    QHash<QString, QString> convComposingIn_;
     QString      convDbPath_;           // configured DB path (from profile)
     QSpinBox    *convDepthSpin_ = nullptr;  // on the Application tab
 

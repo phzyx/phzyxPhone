@@ -39,7 +39,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(core_, &SipCore::incomingCall,       this, &MainWindow::handleIncoming);
     connect(core_, &SipCore::errorOccurred,      this, &MainWindow::handleError);
     connect(core_, &SipCore::rttReceived,        this, &MainWindow::handleRttReceived);
-    connect(core_, &SipCore::rttSent,            this, &MainWindow::handleRttSent);
     connect(core_, &SipCore::incomingTextCall,   this, &MainWindow::handleIncomingTextCall);
     connect(core_, &SipCore::textCallStateChanged, this, &MainWindow::handleTextCallState);
 
@@ -1497,8 +1496,9 @@ QWidget *MainWindow::buildConversationsTab() {
 
     auto *inRow = new QHBoxLayout;
     convInput_ = new QLineEdit;
-    convInput_->setPlaceholderText("Type real-time text and press Enter to send");
+    convInput_->setPlaceholderText("Type to send live as you write; Enter ends the line");
     convInput_->setEnabled(false);
+    connect(convInput_, &QLineEdit::textEdited, this, &MainWindow::onConvInputEdited);
     connect(convInput_, &QLineEdit::returnPressed, this, &MainWindow::onRttSend);
     convSendBtn_ = new QPushButton("Send");
     convSendBtn_->setEnabled(false);
@@ -1575,6 +1575,19 @@ void MainWindow::showConversation(const QString &peerKey) {
                         "<b style='color:%2'>%3:</b> %4</div>")
                     .arg(when, color, who, m.body.toHtmlEscaped());
     }
+    // Live, in-progress (composing) text for the active session - shown but
+    // not yet stored. A thin block acts as a typing cursor.
+    if (!peerKey.isEmpty() && peerKey == convActivePeer_) {
+        const QString in = convComposingIn_.value(peerKey);
+        if (!in.isEmpty())
+            html += QString("<div><i><b style='color:#2e9e5b'>them:</b> "
+                            "%1<span style='color:gray'>&#9613;</span></i></div>")
+                        .arg(in.toHtmlEscaped());
+        if (!convComposingOut_.isEmpty())
+            html += QString("<div><i><b style='color:#3a7bd5'>you:</b> "
+                            "%1<span style='color:gray'>&#9613;</span></i></div>")
+                        .arg(convComposingOut_.toHtmlEscaped());
+    }
     convView_->setHtml(html);
     convView_->moveCursor(QTextCursor::End);
 }
@@ -1590,20 +1603,68 @@ void MainWindow::recordRtt(const QString &peer, const QString &dir,
     refreshConvList();
 }
 
+// A block of real-time text arrived. T.140 streams characters as they are
+// typed, including BACKSPACE (U+0008) for corrections and a line separator
+// (U+2028, or CR/LF) to end a line. Accumulate into the peer's composing
+// buffer and commit each completed line to history.
 void MainWindow::handleRttReceived(const QString &peer, const QString &text) {
-    recordRtt(peer, "in", text);
+    if (!convStore_) return;
+    const QString key = normalizePeerKey(peer);
+    QString buf = convComposingIn_.value(key);
+    for (const QChar &c : text) {
+        const ushort u = c.unicode();
+        if (u == 0x0008) {                          // BACKSPACE: erase
+            if (!buf.isEmpty()) buf.chop(1);
+        } else if (u == 0x000A || u == 0x000D ||
+                   u == 0x2028 || u == 0x2029) {     // line break: commit
+            if (!buf.isEmpty()) {
+                convStore_->addMessage(key, peer, "in", buf);
+                buf.clear();
+            }
+        } else {
+            buf.append(c);
+        }
+    }
+    convComposingIn_[key] = buf;
+    if (key == convCurrentPeer_) showConversation(convCurrentPeer_);
+    refreshConvList();
 }
 
-void MainWindow::handleRttSent(const QString &peer, const QString &text) {
-    recordRtt(peer, "out", text);
+void MainWindow::handleRttSent(const QString &, const QString &) {
+    // Outgoing text is now driven directly from the input field
+    // (onConvInputEdited / onRttSend); nothing to do here.
 }
 
+// Send the delta of the input field as real-time text, character by character,
+// as the user types. Removed characters are sent as BACKSPACE, new characters
+// as themselves - so the remote sees the line being composed live.
+void MainWindow::onConvInputEdited(const QString &text) {
+    if (convActivePeer_.isEmpty()) return;   // only on an active session
+    const QString prev = convComposingOut_;
+    int cpl = 0;
+    const int maxlen = qMin(prev.size(), text.size());
+    while (cpl < maxlen && prev.at(cpl) == text.at(cpl)) ++cpl;
+    QString out;
+    for (int i = 0, removed = prev.size() - cpl; i < removed; ++i)
+        out.append(QChar(0x0008));           // BACKSPACE per removed char
+    out += text.mid(cpl);                    // newly typed characters
+    if (!out.isEmpty()) core_->sendRtt(out);
+    convComposingOut_ = text;
+    if (convActivePeer_ == convCurrentPeer_) showConversation(convCurrentPeer_);
+}
+
+// Enter commits the current line: send a T.140 line separator, persist the
+// completed line to history, and start a fresh line.
 void MainWindow::onRttSend() {
-    if (!convInput_) return;
-    const QString text = convInput_->text();
-    if (text.isEmpty()) return;
-    core_->sendRtt(text);               // echoes back via rttSent -> recordRtt
+    if (!convInput_ || convActivePeer_.isEmpty()) return;
+    const QString line = convComposingOut_;
+    core_->sendRtt(QString(QChar(0x2028)));  // T.140 LINE SEPARATOR
+    convComposingOut_.clear();
     convInput_->clear();
+    if (!line.isEmpty())
+        recordRtt(convActivePeer_, "out", line);   // persist completed line
+    else if (convActivePeer_ == convCurrentPeer_)
+        showConversation(convCurrentPeer_);
 }
 
 void MainWindow::onNewConversation() {
@@ -1711,14 +1772,24 @@ void MainWindow::handleTextCallState(const QString &state, const QString &peer,
         const QString key = normalizePeerKey(peer);
         if (key != convActivePeer_) {
             convActivePeer_ = key;
+            // Fresh session: start with an empty composing line.
+            convComposingOut_.clear();
+            if (convInput_) convInput_->clear();
             showConversation(key);
         }
         refreshConvList();
     } else if (disconnected) {
+        // Drop any uncommitted composing text for the ended session.
+        if (!peer.isEmpty()) convComposingIn_.remove(normalizePeerKey(peer));
+        convComposingOut_.clear();
+        if (convInput_) convInput_->clear();
+        const QString ended = convActivePeer_;
         convActivePeer_.clear();
         convPendingPeer_.clear();
         if (convBannerLabel_) convBannerLabel_->setVisible(false);
         if (convAcceptBtn_)   convAcceptBtn_->setVisible(false);
+        if (!ended.isEmpty() && ended == convCurrentPeer_)
+            showConversation(convCurrentPeer_);   // drop the live cursor lines
         refreshConvList();
     }
     // Text can only be sent once the session is up.
@@ -1742,6 +1813,7 @@ void MainWindow::onDeleteConversation() {
         "Permanently delete the stored history for this conversation?");
     if (btn != QMessageBox::Yes) return;
     convStore_->deletePeer(convCurrentPeer_);
+    convComposingIn_.remove(convCurrentPeer_);
     convCurrentPeer_.clear();
     if (convView_) convView_->clear();
     if (convDeleteBtn_) convDeleteBtn_->setEnabled(false);
