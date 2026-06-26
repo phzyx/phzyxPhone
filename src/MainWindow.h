@@ -99,12 +99,14 @@ private:
     // advanced widgets below, which remain the canonical source for
     // collectAccountSettings()).
     QLineEdit *simpleAccountEdit_, *simpleLoginEdit_, *simplePassEdit_,
-              *simpleRealmEdit_, *simpleRemoteHostEdit_;
+              *simpleRealmEdit_, *simpleRemoteHostEdit_,
+              *simplePaiEdit_, *simpleRpidEdit_;
     QComboBox *simpleTransportCombo_;
     QSpinBox  *simpleLocalPortSpin_, *simpleRemotePortSpin_;
 
     // Account tab - advanced (canonical) widgets
     QLineEdit *idUriEdit_, *registrarEdit_, *userEdit_, *passEdit_, *realmEdit_;
+    QLineEdit *paiEdit_, *rpidEdit_;   // caller ID identity headers
     QComboBox *transportCombo_;
     QSpinBox  *localPortSpin_;
     QLineEdit *boundAddrEdit_;

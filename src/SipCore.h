@@ -42,6 +42,10 @@ struct AccountSettings {
     QString turnPassword;
     bool    sdpNatRewrite = false;
 
+    // Caller ID: outgoing INVITE identity headers (free-text, RFC 3325 / RPID)
+    QString pAssertedIdentity;   // P-Asserted-Identity header value, empty = off
+    QString remotePartyId;       // Remote-Party-ID header value, empty = off
+
     // SRTP: 0=disabled 1=optional 2=mandatory
     int     srtpUse = 0;
     // SRTP secure signalling requirement: 0=none 1=tls 2=end-to-end sips
@@ -180,4 +184,6 @@ private:
     // across calls and can be re-applied when the sound device opens.
     float speakerLevel_ = 1.0f;
     float micLevel_     = 1.0f;
+    QString callerPai_;          // P-Asserted-Identity for outgoing calls
+    QString callerRpid_;         // Remote-Party-ID for outgoing calls
 };

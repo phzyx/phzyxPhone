@@ -252,6 +252,10 @@ bool SipCore::addAccount(const AccountSettings &s, QString &err) {
         acfg.mediaConfig.srtpUse = (pjmedia_srtp_use)s.srtpUse;
         acfg.mediaConfig.srtpSecureSignaling = s.srtpSignaling;
 
+        // Caller ID headers applied to outgoing INVITEs (see makeCall).
+        callerPai_  = s.pAssertedIdentity;
+        callerRpid_ = s.remotePartyId;
+
         account_ = std::make_unique<MyAccount>(this);
         account_->create(acfg, true /* make default */);
         return true;
@@ -342,6 +346,19 @@ bool SipCore::makeCall(const QString &destUri,
     try {
         auto *call = new MyCall(*account_, this);
         CallOpParam prm(true /* use default call settings */);
+        // Caller ID identity headers (only when configured).
+        if (!callerPai_.isEmpty()) {
+            SipHeader sh;
+            sh.hName  = "P-Asserted-Identity";
+            sh.hValue = callerPai_.toStdString();
+            prm.txOption.headers.push_back(sh);
+        }
+        if (!callerRpid_.isEmpty()) {
+            SipHeader sh;
+            sh.hName  = "Remote-Party-ID";
+            sh.hValue = callerRpid_.toStdString();
+            prm.txOption.headers.push_back(sh);
+        }
         for (const auto &h : extraHeaders) {
             SipHeader sh;
             sh.hName  = h.first.toStdString();

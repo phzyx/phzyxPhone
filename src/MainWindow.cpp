@@ -117,6 +117,11 @@ QWidget *MainWindow::buildSimpleAccountPage() {
     simpleRemotePortSpin_->setRange(1, 65535);
     simpleRemotePortSpin_->setValue(5060);
 
+    simplePaiEdit_  = new QLineEdit;
+    simplePaiEdit_->setPlaceholderText("e.g. \"Alice\" <sip:alice@example.com> (optional)");
+    simpleRpidEdit_ = new QLineEdit;
+    simpleRpidEdit_->setPlaceholderText("e.g. \"Alice\" <sip:alice@example.com> (optional)");
+
     form->addRow(new QLabel("<b>Account</b>"));
     form->addRow("Account", simpleAccountEdit_);
     form->addRow("Login", simpleLoginEdit_);
@@ -128,6 +133,9 @@ QWidget *MainWindow::buildSimpleAccountPage() {
     form->addRow(new QLabel("<b>Server</b>"));
     form->addRow("Remote host", simpleRemoteHostEdit_);
     form->addRow("Remote port", simpleRemotePortSpin_);
+    form->addRow(new QLabel("<b>Caller ID</b>"));
+    form->addRow("P-Asserted-Identity", simplePaiEdit_);
+    form->addRow("Remote-Party-ID", simpleRpidEdit_);
 
     return page;
 }
@@ -143,6 +151,11 @@ QWidget *MainWindow::buildAdvancedAccountPage() {
     passEdit_      = new QLineEdit;
     passEdit_->setEchoMode(QLineEdit::Password);
     realmEdit_     = new QLineEdit("*");
+
+    paiEdit_       = new QLineEdit;
+    paiEdit_->setPlaceholderText("P-Asserted-Identity, e.g. \"Alice\" <sip:alice@example.com>");
+    rpidEdit_      = new QLineEdit;
+    rpidEdit_->setPlaceholderText("Remote-Party-ID, e.g. \"Alice\" <sip:alice@example.com>");
 
     transportCombo_ = new QComboBox;
     transportCombo_->addItems({"UDP", "TCP", "TLS"});
@@ -178,6 +191,9 @@ QWidget *MainWindow::buildAdvancedAccountPage() {
     form->addRow("Auth username", userEdit_);
     form->addRow("Auth password", passEdit_);
     form->addRow("Auth realm", realmEdit_);
+    form->addRow(new QLabel("<b>Caller ID</b>"));
+    form->addRow("P-Asserted-Identity", paiEdit_);
+    form->addRow("Remote-Party-ID", rpidEdit_);
     form->addRow(new QLabel("<b>Transport</b>"));
     form->addRow("Transport", transportCombo_);
     form->addRow("Local port", localPortSpin_);
@@ -542,6 +558,8 @@ AccountSettings MainWindow::collectAccountSettings() const {
     s.username     = userEdit_->text();
     s.password     = passEdit_->text();
     s.realm        = realmEdit_->text().isEmpty() ? "*" : realmEdit_->text();
+    s.pAssertedIdentity = paiEdit_->text();
+    s.remotePartyId     = rpidEdit_->text();
     s.transport    = transportCombo_->currentText();
     s.localPort    = localPortSpin_->value();
     s.boundAddress = boundAddrEdit_->text();
@@ -651,6 +669,8 @@ QString writeProfileYaml(const AccountSettings &s, int logLevel) {
     o += "username: "       + yamlScalar(s.username)     + "\n";
     o += "password: "       + yamlScalar(s.password)     + "\n";
     o += "realm: "          + yamlScalar(s.realm)        + "\n";
+    o += "pAssertedIdentity: " + yamlScalar(s.pAssertedIdentity) + "\n";
+    o += "remotePartyId: "  + yamlScalar(s.remotePartyId) + "\n";
     o += "transport: "      + yamlScalar(s.transport)    + "\n";
     o += "localPort: "      + QString::number(s.localPort)     + "\n";
     o += "boundAddress: "   + yamlScalar(s.boundAddress) + "\n";
@@ -684,6 +704,8 @@ bool parseProfileYaml(const QString &text, AccountSettings &s, int &logLevel) {
         else if (key == "username")      s.username = val;
         else if (key == "password")      s.password = val;
         else if (key == "realm")         s.realm = val;
+        else if (key == "pAssertedIdentity") s.pAssertedIdentity = val;
+        else if (key == "remotePartyId") s.remotePartyId = val;
         else if (key == "transport")     s.transport = val;
         else if (key == "localPort")     s.localPort = val.toInt();
         else if (key == "boundAddress")  s.boundAddress = val;
@@ -754,6 +776,8 @@ void MainWindow::syncSimpleToAdvanced() {
     userEdit_->setText(simpleLoginEdit_->text());
     passEdit_->setText(simplePassEdit_->text());
     realmEdit_->setText(simpleRealmEdit_->text());
+    paiEdit_->setText(simplePaiEdit_->text());
+    rpidEdit_->setText(simpleRpidEdit_->text());
     transportCombo_->setCurrentIndex(simpleTransportCombo_->currentIndex());
     localPortSpin_->setValue(simpleLocalPortSpin_->value());
 }
@@ -764,6 +788,8 @@ void MainWindow::syncAdvancedToSimple() {
     simpleLoginEdit_->setText(userEdit_->text());
     simplePassEdit_->setText(passEdit_->text());
     simpleRealmEdit_->setText(realmEdit_->text());
+    simplePaiEdit_->setText(paiEdit_->text());
+    simpleRpidEdit_->setText(rpidEdit_->text());
     simpleTransportCombo_->setCurrentIndex(transportCombo_->currentIndex());
     simpleLocalPortSpin_->setValue(localPortSpin_->value());
 
@@ -780,6 +806,8 @@ void MainWindow::applyAccountSettings(const AccountSettings &s, int logLevel) {
     userEdit_->setText(s.username);
     passEdit_->setText(s.password);
     realmEdit_->setText(s.realm);
+    paiEdit_->setText(s.pAssertedIdentity);
+    rpidEdit_->setText(s.remotePartyId);
     const int ti = transportCombo_->findText(s.transport, Qt::MatchFixedString);
     transportCombo_->setCurrentIndex(ti >= 0 ? ti : 0);
     localPortSpin_->setValue(s.localPort);
